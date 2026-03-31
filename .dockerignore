@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.chat_history
+*.db
+generated/*
+pdf-templates/archive/*
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md

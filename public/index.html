@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRS Tax Forms Manager</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h1><span class="icon">🏛️</span> IRS Forms Manager</h1>
+            <p>Document & Customer Database</p>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-section">Main</div>
+            <a class="nav-item active" data-page="dashboard" onclick="navigateTo('dashboard')">
+                <span class="nav-icon">📊</span> Dashboard
+            </a>
+            <a class="nav-item" data-page="forms" onclick="navigateTo('forms')">
+                <span class="nav-icon">📝</span> Fill Out Forms
+            </a>
+            <div class="nav-section">Management</div>
+            <a class="nav-item" data-page="customers" onclick="navigateTo('customers')">
+                <span class="nav-icon">👥</span> Customers
+            </a>
+            <a class="nav-item" data-page="templates" onclick="navigateTo('templates')">
+                <span class="nav-icon">📄</span> Templates
+            </a>
+            <a class="nav-item" data-page="history" onclick="navigateTo('history')">
+                <span class="nav-icon">📋</span> Form History
+            </a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <!-- ==================== DASHBOARD ==================== -->
+        <section id="page-dashboard" class="page-section active">
+            <div class="top-bar">
+                <div>
+                    <h2>Dashboard</h2>
+                    <span class="breadcrumb">Welcome to IRS Forms Manager</span>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="dashboardStats">
+                <div class="stat-card">
+                    <div class="stat-icon blue">👥</div>
+                    <div class="stat-info">
+                        <h4 id="statCustomers">0</h4>
+                        <p>Total Customers</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green">📄</div>
+                    <div class="stat-info">
+                        <h4 id="statTemplates">0</h4>
+                        <p>Active Templates</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon red">📝</div>
+                    <div class="stat-info">
+                        <h4 id="statForms">0</h4>
+                        <p>Forms Generated</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon yellow">📎</div>
+                    <div class="stat-info">
+                        <h4 id="statPdfs">0</h4>
+                        <p>PDFs with Templates</p>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📝 Quick Actions</h3>
+                    </div>
+                    <div class="card-body">
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <button class="btn btn-primary btn-lg" onclick="navigateTo('forms')">
+                                📝 Fill Out a New Form
+                            </button>
+                            <button class="btn btn-success btn-lg" onclick="navigateTo('customers')">
+                                👥 Add New Customer
+                            </button>
+                            <button class="btn btn-outline btn-lg" onclick="navigateTo('templates')">
+                                📄 Manage Templates
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📋 Recent Forms</h3>
+                    </div>
+                    <div class="card-body" id="recentFormsContainer">
+                        <div class="loading"><div class="spinner"></div> Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== FORMS (Fill Out) ==================== -->
+        <section id="page-forms" class="page-section">
+            <div class="top-bar">
+                <div>
+                    <h2>Fill Out Forms</h2>
+                    <span class="breadcrumb">Select a form type, then fill in the details</span>
+                </div>
+            </div>
+
+            <!-- Step 1: Form Selection -->
+            <div id="formStep1">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Select a Form</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="template-grid" id="formTemplateGrid">
+                            <div class="loading"><div class="spinner"></div> Loading templates...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Fill Form -->
+            <div id="formStep2" style="display:none;">
+                <button class="btn btn-outline" onclick="backToFormSelection()" style="margin-bottom: 15px;">
+                    ← Back to Form Selection
+                </button>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 id="formTitle">Form</h3>
+                        <span class="badge badge-primary" id="formTypeBadge"></span>
+                    </div>
+                    <div class="card-body">
+                        <!-- Customer Picker -->
+                        <div class="alert alert-info">
+                            💡 Select an existing customer to auto-fill, or enter details manually for a new customer.
+                        </div>
+                        <div class="customer-picker">
+                            <label style="font-weight: 600; margin-bottom: 6px; display: block;">🔍 Search / Select Customer</label>
+                            <input type="text" class="customer-picker-input" id="customerPickerInput" 
+                                   placeholder="Type to search customers (Last Name, First Name)..." 
+                                   autocomplete="off">
+                            <div class="customer-picker-dropdown" id="customerPickerDropdown"></div>
+                            <input type="hidden" id="selectedCustomerId" value="">
+                        </div>
+
+                        <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);">
+
+                        <!-- Dynamic Form Fields -->
+                        <div id="dynamicFormFields"></div>
+
+                        <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);">
+
+                        <!-- Options -->
+                        <div class="form-row">
+                            <div class="form-group">
+                                <div class="form-check">
+                                    <input type="checkbox" id="saveCustomerCheck" checked>
+                                    <label for="saveCustomerCheck">Save/update customer in database</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="form-check">
+                                    <input type="checkbox" id="generatePdfCheck" checked>
+                                    <label for="generatePdfCheck">Generate PDF document</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 10px; margin-top: 20px;">
+                            <button class="btn btn-primary btn-lg" onclick="submitForm()">
+                                💾 Save & Generate
+                            </button>
+                            <button class="btn btn-outline btn-lg" onclick="clearForm()">
+                                🗑️ Clear Form
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Success -->
+            <div id="formStep3" style="display:none;">
+                <div class="card">
+                    <div class="card-body" style="text-align: center; padding: 40px;">
+                        <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
+                        <h2 style="color: var(--success); margin-bottom: 10px;">Form Saved Successfully!</h2>
+                        <p id="formSuccessMessage" style="color: var(--text-light); margin-bottom: 20px;"></p>
+                        <div style="display: flex; gap: 10px; justify-content: center;">
+                            <a id="downloadPdfLink" class="btn btn-success btn-lg" target="_blank" style="display:none;">
+                                📥 Download PDF
+                            </a>
+                            <button class="btn btn-primary btn-lg" onclick="backToFormSelection()">
+                                📝 Fill Another Form
+                            </button>
+                            <button class="btn btn-outline btn-lg" onclick="navigateTo('history')">
+                                📋 View History
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== CUSTOMERS ==================== -->
+        <section id="page-customers" class="page-section">
+            <div class="top-bar">
+                <div>
+                    <h2>Customer Management</h2>
+                    <span class="breadcrumb">Manage your client database</span>
+                </div>
+                <button class="btn btn-primary" onclick="showAddCustomerModal()">
+                    ➕ Add Customer
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>All Customers</h3>
+                    <div class="search-bar" style="margin: 0; width: 300px;">
+                        <input type="text" class="form-control" id="customerSearch" 
+                               placeholder="Search customers..." oninput="searchCustomers()">
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Business</th>
+                                    <th>SSN/EIN</th>
+                                    <th>Email</th>
+                                    <th>Phone</th>
+                                    <th>City, State</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customersTableBody">
+                                <tr><td colspan="7" class="loading"><div class="spinner"></div> Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TEMPLATES ==================== -->
+        <section id="page-templates" class="page-section">
+            <div class="top-bar">
+                <div>
+                    <h2>Template Management</h2>
+                    <span class="breadcrumb">Upload & manage IRS form PDF templates</span>
+                </div>
+                <button class="btn btn-primary" onclick="showAddTemplateModal()">
+                    ➕ Add New Template
+                </button>
+            </div>
+
+            <div class="alert alert-info">
+                💡 Upload IRS PDF forms here. When the IRS updates a form, upload the new version — the old one will be archived automatically.
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>All Templates</h3>
+                </div>
+                <div class="card-body">
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Form Type</th>
+                                    <th>Form Name</th>
+                                    <th>Version/Year</th>
+                                    <th>PDF Uploaded</th>
+                                    <th>Status</th>
+                                    <th>Upload Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="templatesTableBody">
+                                <tr><td colspan="7" class="loading"><div class="spinner"></div> Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== HISTORY ==================== -->
+        <section id="page-history" class="page-section">
+            <div class="top-bar">
+                <div>
+                    <h2>Form History</h2>
+                    <span class="breadcrumb">View all submitted forms</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>All Submissions</h3>
+                    <div style="display: flex; gap: 10px;">
+                        <select class="form-control" id="historyFilterType" onchange="loadHistory()" style="width: 150px;">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Form Type</th>
+                                    <th>Customer</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody">
+                                <tr><td colspan="6" class="loading"><div class="spinner"></div> Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ==================== MODALS ==================== -->
+
+    <!-- Add/Edit Customer Modal -->
+    <div class="modal-overlay" id="customerModal">
+        <div class="modal" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3 id="customerModalTitle">Add Customer</h3>
+                <button class="modal-close" onclick="closeModal('customerModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editCustomerId">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>First Name <span class="required">*</span></label>
+                        <input type="text" class="form-control" id="custFirstName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Last Name <span class="required">*</span></label>
+                        <input type="text" class="form-control" id="custLastName" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>SSN</label>
+                        <input type="text" class="form-control" id="custSSN" placeholder="XXX-XX-XXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>EIN</label>
+                        <input type="text" class="form-control" id="custEIN" placeholder="XX-XXXXXXX">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Business Name</label>
+                    <input type="text" class="form-control" id="custBusiness">
+                </div>
+                <div class="form-group">
+                    <label>Address</label>
+                    <input type="text" class="form-control" id="custAddress">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>City</label>
+                        <input type="text" class="form-control" id="custCity">
+                    </div>
+                    <div class="form-group">
+                        <label>State</label>
+                        <input type="text" class="form-control" id="custState">
+                    </div>
+                    <div class="form-group">
+                        <label>ZIP</label>
+                        <input type="text" class="form-control" id="custZip">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Phone</label>
+                        <input type="text" class="form-control" id="custPhone">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" class="form-control" id="custEmail">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Date of Birth</label>
+                        <input type="date" class="form-control" id="custDOB">
+                    </div>
+                    <div class="form-group">
+                        <label>Filing Status</label>
+                        <select class="form-control" id="custFilingStatus">
+                            <option value="">Select...</option>
+                            <option value="Single">Single</option>
+                            <option value="Married Filing Jointly">Married Filing Jointly</option>
+                            <option value="Married Filing Separately">Married Filing Separately</option>
+                            <option value="Head of Household">Head of Household</option>
+                            <option value="Qualifying Widow(er)">Qualifying Widow(er)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea class="form-control" id="custNotes" rows="2"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('customerModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveCustomer()">💾 Save Customer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Template Modal -->
+    <div class="modal-overlay" id="templateModal">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 id="templateModalTitle">Upload Template PDF</h3>
+                <button class="modal-close" onclick="closeModal('templateModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="uploadTemplateId">
+                <div class="form-group" id="newTemplateTypeGroup">
+                    <label>Form Type <span class="required">*</span></label>
+                    <input type="text" class="form-control" id="uploadFormType" placeholder="e.g., W-9, 1040, etc.">
+                </div>
+                <div class="form-group">
+                    <label>Form Name</label>
+                    <input type="text" class="form-control" id="uploadFormName" placeholder="e.g., Request for Taxpayer Identification Number">
+                </div>
+                <div class="form-group">
+                    <label>Version / Year</label>
+                    <input type="text" class="form-control" id="uploadVersionYear" placeholder="e.g., 2024">
+                </div>
+                <div class="form-group">
+                    <label>PDF File <span class="required">*</span></label>
+                    <div class="upload-area" id="uploadArea" onclick="document.getElementById('pdfFileInput').click()">
+                        <div class="upload-icon">📄</div>
+                        <p>Click to select or drag & drop a PDF file</p>
+                        <p id="uploadFileName" style="font-weight: 600; margin-top: 8px;"></p>
+                    </div>
+                    <input type="file" id="pdfFileInput" accept=".pdf" style="display:none" onchange="handleFileSelect(this)">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('templateModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="uploadTemplate()">📤 Upload Template</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Customer Detail Modal -->
+    <div class="modal-overlay" id="customerDetailModal">
+        <div class="modal" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3 id="customerDetailTitle">Customer Details</h3>
+                <button class="modal-close" onclick="closeModal('customerDetailModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="customerDetailBody">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('customerDetailModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>

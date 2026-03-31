@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  irs-forms:
+    build: .
+    container_name: irs-forms-manager
+    ports:
+      - "8847:3000"
+    volumes:
+      - irs-data:/app/database
+      - irs-pdfs:/app/pdf-templates
+      - irs-generated:/app/generated
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  irs-data:
+  irs-pdfs:
+  irs-generated:

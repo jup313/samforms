@@ -1,0 +1,8 @@
+node_modules/
+*.db
+.chat_history
+generated/*.pdf
+pdf-templates/archive/
+.DS_Store
+._*
+/tmp/
