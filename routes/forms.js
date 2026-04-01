@@ -160,7 +160,15 @@ router.post('/', async (req, res) => {
         }
 
         // Generate PDF if requested and template has a PDF
-        if (generate_pdf && template.file_path && fs.existsSync(path.join(req.app.locals.rootDir, template.file_path))) {
+        // Special forms (ENGAGEMENT) get their own generator regardless of file_path
+        if (generate_pdf && template.form_type === 'ENGAGEMENT') {
+            try {
+                pdfPath = await generateEngagementLetterPDF(req.app.locals.rootDir, template, form_data, submissionId);
+                db.prepare('UPDATE form_submissions SET pdf_path = ? WHERE id = ?').run(pdfPath, submissionId);
+            } catch (pdfErr) {
+                console.error('Engagement letter generation error:', pdfErr.message);
+            }
+        } else if (generate_pdf && template.file_path && fs.existsSync(path.join(req.app.locals.rootDir, template.file_path))) {
             try {
                 pdfPath = await generateFilledPDF(req.app.locals.rootDir, template, form_data, submissionId);
                 db.prepare('UPDATE form_submissions SET pdf_path = ? WHERE id = ?').run(pdfPath, submissionId);
@@ -637,6 +645,11 @@ async function appendDataSummaryPage(pdfDoc, template, formData, submissionId, f
 
 // ==================== SIMPLE PDF (no template) ====================
 async function generateSimplePDF(rootDir, template, formData, submissionId) {
+    // Special handling for ENGAGEMENT letters - generate a professional letter
+    if (template.form_type === 'ENGAGEMENT') {
+        return await generateEngagementLetterPDF(rootDir, template, formData, submissionId);
+    }
+
     const pdfDoc = await PDFDocument.create();
     
     // Use the same data summary page as the main function
@@ -647,6 +660,171 @@ async function generateSimplePDF(rootDir, template, formData, submissionId) {
     const outputPath = path.join('generated', outputFilename);
     fs.writeFileSync(path.join(rootDir, outputPath), pdfBytes);
 
+    return outputPath;
+}
+
+// ==================== ENGAGEMENT LETTER PDF ====================
+async function generateEngagementLetterPDF(rootDir, template, formData, submissionId) {
+    const pdfDoc = await PDFDocument.create();
+    const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    const italicFont = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+
+    let page = pdfDoc.addPage([612, 792]);
+    const { width, height } = page.getSize();
+    const margin = 72; // 1 inch margins
+    const maxWidth = width - margin * 2;
+    let y = height - margin;
+
+    // Helper: draw text with word wrap, returns new Y
+    const drawWrappedText = (text, x, startY, fontSize, usedFont, lineHeight) => {
+        const words = text.split(' ');
+        let currentLine = '';
+        let currentY = startY;
+        for (const word of words) {
+            const test = currentLine + (currentLine ? ' ' : '') + word;
+            if (usedFont.widthOfTextAtSize(test, fontSize) > maxWidth - (x - margin)) {
+                if (currentLine) {
+                    page.drawText(currentLine, { x, y: currentY, size: fontSize, font: usedFont, color: rgb(0, 0, 0) });
+                    currentY -= lineHeight;
+                    if (currentY < margin + 40) { page = pdfDoc.addPage([612, 792]); currentY = height - margin; }
+                }
+                currentLine = word;
+            } else {
+                currentLine = test;
+            }
+        }
+        if (currentLine) {
+            page.drawText(currentLine, { x, y: currentY, size: fontSize, font: usedFont, color: rgb(0, 0, 0) });
+            currentY -= lineHeight;
+        }
+        return currentY;
+    };
+
+    // Data references
+    const firmName = formData.firm_name || 'Tax Professional Services';
+    const firmAddress = formData.firm_address || '';
+    const preparerName = formData.preparer_name || '';
+    const preparerTitle = formData.preparer_title || '';
+    const clientName = formData.client_name || [formData.first_name, formData.last_name].filter(Boolean).join(' ') || 'Client';
+    const clientAddress = [formData.address, [formData.city, formData.state, formData.zip].filter(Boolean).join(', ')].filter(Boolean).join('\n');
+    const engagementDate = formData.engagement_date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const services = formData.services_description || 'Tax preparation and filing services';
+    const fee = formData.fee_arrangement || 'To be determined based on complexity';
+    const paymentTerms = formData.payment_terms || 'Payment due upon completion of services';
+    const engagementPeriod = formData.engagement_period || `Tax Year ${formData.tax_year || new Date().getFullYear()}`;
+
+    // ---- FIRM HEADER ----
+    page.drawText(firmName, { x: margin, y, size: 18, font: boldFont, color: rgb(0.12, 0.20, 0.40) });
+    y -= 18;
+    if (firmAddress) {
+        y = drawWrappedText(firmAddress, margin, y, 10, font, 14);
+    }
+    y -= 6;
+    page.drawLine({ start: { x: margin, y }, end: { x: width - margin, y }, thickness: 2, color: rgb(0.12, 0.20, 0.40) });
+    y -= 30;
+
+    // ---- DATE ----
+    page.drawText(engagementDate, { x: margin, y, size: 11, font: font, color: rgb(0, 0, 0) });
+    y -= 28;
+
+    // ---- CLIENT ADDRESS ----
+    page.drawText(clientName, { x: margin, y, size: 11, font: boldFont, color: rgb(0, 0, 0) });
+    y -= 15;
+    if (clientAddress) {
+        const addrLines = clientAddress.split('\n');
+        for (const line of addrLines) {
+            if (line.trim()) {
+                page.drawText(line.trim(), { x: margin, y, size: 11, font: font, color: rgb(0, 0, 0) });
+                y -= 15;
+            }
+        }
+    }
+    y -= 15;
+
+    // ---- SALUTATION ----
+    page.drawText(`Dear ${clientName},`, { x: margin, y, size: 11, font: font, color: rgb(0, 0, 0) });
+    y -= 22;
+
+    // ---- BODY ----
+    const bodyParagraphs = [
+        `This letter is to confirm our understanding of the terms and objectives of our engagement and the nature and limitations of the services we will provide.`,
+        `SCOPE OF SERVICES`,
+        `We will provide the following services for the period of ${engagementPeriod}:`,
+        services,
+        `RESPONSIBILITIES`,
+        `We will perform the services described above in accordance with applicable professional standards. Our services are based on the information you provide to us. You are responsible for the accuracy and completeness of all information provided.`,
+        `It is your responsibility to maintain adequate records and provide all documentation necessary for the preparation of complete and accurate returns and financial statements. You are also responsible for ensuring that all income is properly reported and that deductions claimed are supported by documentation.`,
+        `FEE ARRANGEMENT`,
+        `Our fees for these services will be: ${fee}`,
+        `${paymentTerms}`,
+        `ENGAGEMENT PERIOD`,
+        `This engagement covers: ${engagementPeriod}. Either party may terminate this agreement with written notice. However, fees for services rendered prior to termination will remain due and payable.`,
+        `CONFIDENTIALITY`,
+        `We will maintain the confidentiality of your information in accordance with professional standards and applicable laws and regulations. We will not disclose your information to third parties without your consent, except as required by law.`,
+        `AGREEMENT`,
+        `If this letter correctly sets forth your understanding of the terms of our engagement, please sign below and return a copy to us. Your signature confirms that you have read, understand, and agree to the terms of this engagement letter.`,
+    ];
+
+    for (const para of bodyParagraphs) {
+        if (y < margin + 80) { page = pdfDoc.addPage([612, 792]); y = height - margin; }
+        
+        // Section headers in bold
+        if (['SCOPE OF SERVICES', 'RESPONSIBILITIES', 'FEE ARRANGEMENT', 'ENGAGEMENT PERIOD', 'CONFIDENTIALITY', 'AGREEMENT'].includes(para)) {
+            y -= 8;
+            page.drawText(para, { x: margin, y, size: 11, font: boldFont, color: rgb(0.12, 0.20, 0.40) });
+            y -= 18;
+        } else {
+            y = drawWrappedText(para, margin, y, 11, font, 15);
+            y -= 8;
+        }
+    }
+
+    // ---- SIGNATURE BLOCKS ----
+    if (y < margin + 180) { page = pdfDoc.addPage([612, 792]); y = height - margin; }
+    y -= 20;
+
+    page.drawText('Sincerely,', { x: margin, y, size: 11, font: font, color: rgb(0, 0, 0) });
+    y -= 40;
+
+    // Preparer signature line
+    page.drawLine({ start: { x: margin, y }, end: { x: margin + 200, y }, thickness: 1, color: rgb(0, 0, 0) });
+    y -= 14;
+    if (preparerName) {
+        page.drawText(preparerName, { x: margin, y, size: 11, font: boldFont, color: rgb(0, 0, 0) });
+        y -= 14;
+    }
+    if (preparerTitle) {
+        page.drawText(preparerTitle, { x: margin, y, size: 10, font: italicFont, color: rgb(0.3, 0.3, 0.3) });
+        y -= 14;
+    }
+    page.drawText(firmName, { x: margin, y, size: 10, font: font, color: rgb(0.3, 0.3, 0.3) });
+    y -= 40;
+
+    // Client acceptance
+    page.drawText('ACCEPTED AND AGREED:', { x: margin, y, size: 11, font: boldFont, color: rgb(0.12, 0.20, 0.40) });
+    y -= 30;
+
+    // Client signature line
+    page.drawLine({ start: { x: margin, y }, end: { x: margin + 200, y }, thickness: 1, color: rgb(0, 0, 0) });
+    // Date line
+    page.drawLine({ start: { x: margin + 260, y }, end: { x: margin + 400, y }, thickness: 1, color: rgb(0, 0, 0) });
+    y -= 14;
+    page.drawText('Client Signature', { x: margin, y, size: 9, font: font, color: rgb(0.5, 0.5, 0.5) });
+    page.drawText('Date', { x: margin + 260, y, size: 9, font: font, color: rgb(0.5, 0.5, 0.5) });
+    y -= 22;
+
+    page.drawLine({ start: { x: margin, y }, end: { x: margin + 200, y }, thickness: 1, color: rgb(0, 0, 0) });
+    y -= 14;
+    page.drawText('Print Name', { x: margin, y, size: 9, font: font, color: rgb(0.5, 0.5, 0.5) });
+
+    // Save
+    const pdfBytes = await pdfDoc.save();
+    const outputFilename = `${template.form_type}_${submissionId}_${Date.now()}.pdf`;
+    const outputPath = path.join('generated', outputFilename);
+    fs.writeFileSync(path.join(rootDir, outputPath), pdfBytes);
+
+    console.log(`Engagement Letter generated for ${clientName}`);
     return outputPath;
 }
 
