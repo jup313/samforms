@@ -669,6 +669,7 @@ async function loadTemplates() {
                     <div class="actions">
                         <button class="btn btn-sm btn-success" onclick="downloadIrsPdf(${t.id}, '${t.form_type}')" title="Download from IRS.gov" id="irsBtn_${t.id}">🌐</button>
                         <button class="btn btn-sm btn-primary" onclick="showUploadForTemplate(${t.id}, '${t.form_type}')" title="Upload/Update PDF">📤</button>
+                        ${t.file_path && t.file_path !== '' ? `<button class="btn btn-sm btn-outline" onclick="showFieldMappings(${t.id})" title="Map PDF Fields to Data Fields" style="background:#e8f4fd;">🔗</button>` : ''}
                         ${t.file_path && t.file_path !== '' ? `<a href="/${t.file_path}" target="_blank" class="btn btn-sm btn-outline" title="View PDF">👁️</a>` : ''}
                         ${t.active ? `<button class="btn btn-sm btn-danger" onclick="archiveTemplate(${t.id})" title="Archive">📦</button>` : ''}
                     </div>
@@ -888,6 +889,186 @@ async function deleteSubmission(id) {
         loadHistory();
     } catch (err) {
         showToast('Error deleting submission: ' + err.message, 'error');
+    }
+}
+
+// ==================== FIELD MAPPING ====================
+let fieldMapTemplateId = null;
+let fieldMapPdfFields = [];
+
+// Our data fields that can be mapped to PDF fields
+const DATA_FIELDS = [
+    { key: '', label: '— Not Mapped —' },
+    { key: 'first_name', label: 'First Name' },
+    { key: 'last_name', label: 'Last Name' },
+    { key: 'full_name', label: 'Full Name (First + Last)' },
+    { key: 'ssn', label: 'SSN' },
+    { key: 'ein', label: 'EIN' },
+    { key: 'business_name', label: 'Business Name' },
+    { key: 'address', label: 'Address' },
+    { key: 'city', label: 'City' },
+    { key: 'state', label: 'State' },
+    { key: 'zip', label: 'ZIP' },
+    { key: 'city_state_zip', label: 'City, State, ZIP (combined)' },
+    { key: 'phone', label: 'Phone' },
+    { key: 'email', label: 'Email' },
+    { key: 'date_of_birth', label: 'Date of Birth' },
+    { key: 'filing_status', label: 'Filing Status' },
+    { key: 'federal_tax_classification', label: 'Federal Tax Classification' },
+    { key: 'employer_name', label: 'Employer Name' },
+    { key: 'employer_ein', label: 'Employer EIN' },
+    { key: 'employer_address', label: 'Employer Address' },
+    { key: 'payer_name', label: 'Payer Name' },
+    { key: 'payer_tin', label: 'Payer TIN' },
+    { key: 'payer_address', label: 'Payer Address' },
+    { key: 'wages_tips', label: 'Wages/Tips' },
+    { key: 'federal_tax_withheld', label: 'Federal Tax Withheld' },
+    { key: 'nonemployee_compensation', label: 'Nonemployee Compensation' },
+    { key: 'account_numbers', label: 'Account Numbers' },
+    { key: 'requester_name', label: 'Requester Name' },
+    { key: 'certification_date', label: 'Certification Date' },
+    { key: 'taxpayer_name', label: 'Taxpayer Name' },
+    { key: 'taxpayer_id', label: 'Taxpayer ID' },
+    { key: 'representative_name', label: 'Representative Name' },
+    { key: 'designee_name', label: 'Designee Name' },
+    { key: 'tax_matters', label: 'Tax Matters' },
+    { key: 'tax_form_number', label: 'Tax Form Number' },
+    { key: 'tax_years', label: 'Tax Years/Periods' },
+    { key: 'client_name', label: 'Client Name' },
+    { key: 'services_description', label: 'Services Description' },
+    { key: 'fee_arrangement', label: 'Fee Arrangement' },
+    { key: 'engagement_date', label: 'Engagement Date' },
+    { key: 'firm_name', label: 'Firm Name' },
+];
+
+async function showFieldMappings(templateId) {
+    fieldMapTemplateId = templateId;
+    document.getElementById('fieldMapContent').innerHTML = '<div class="loading"><div class="spinner"></div> Loading PDF fields...</div>';
+    openModal('fieldMapModal');
+
+    try {
+        const data = await api(`/api/templates/${templateId}/fields`);
+        const template = await api(`/api/templates/${templateId}`);
+        fieldMapPdfFields = data.fields || [];
+        const currentMappings = data.mappings || {};
+
+        document.getElementById('fieldMapTitle').textContent = `Map Fields — ${template.form_type}`;
+
+        if (fieldMapPdfFields.length === 0) {
+            document.getElementById('fieldMapContent').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">📄</div>
+                    <p>This PDF has no fillable form fields.</p>
+                    <p style="color: var(--text-light);">The system will generate a data summary page instead.</p>
+                </div>`;
+            return;
+        }
+
+        // Build reverse map: find which data_key maps to which pdf_field
+        // currentMappings format: { data_key: pdf_field_name_or_same_key }
+        const pdfFieldToDataKey = {};
+        for (const [dataKey, pdfField] of Object.entries(currentMappings)) {
+            if (pdfField && pdfField !== dataKey) {
+                pdfFieldToDataKey[pdfField] = dataKey;
+            }
+        }
+
+        let html = `<p style="margin-bottom:10px; color: var(--text-light);">${fieldMapPdfFields.length} PDF fields found. Map each to your data field:</p>`;
+        html += '<table style="width:100%;"><thead><tr><th style="width:50%;">PDF Field Name</th><th>Field Type</th><th style="width:35%;">Maps To →</th></tr></thead><tbody>';
+
+        for (const field of fieldMapPdfFields) {
+            const currentMap = pdfFieldToDataKey[field.name] || '';
+            const shortName = field.name.replace(/^topmostSubform\[0\]\.Page\d+\[0\]\./, '').replace(/\[\d+\]$/g, '');
+
+            html += `<tr>
+                <td title="${field.name}" style="font-family: monospace; font-size: 11px; word-break: break-all;">${shortName}</td>
+                <td><span class="badge badge-${field.type === 'PDFTextField' ? 'primary' : 'success'}" style="font-size:10px;">${field.type.replace('PDF','')}</span></td>
+                <td>
+                    <select class="form-control" data-pdf-field="${field.name}" style="font-size: 12px; padding: 4px;">
+                        ${DATA_FIELDS.map(df => `<option value="${df.key}" ${df.key === currentMap ? 'selected' : ''}>${df.label}</option>`).join('')}
+                    </select>
+                </td>
+            </tr>`;
+        }
+
+        html += '</tbody></table>';
+        document.getElementById('fieldMapContent').innerHTML = html;
+    } catch (err) {
+        document.getElementById('fieldMapContent').innerHTML = `<div class="alert" style="color:red;">Error: ${err.message}</div>`;
+        showToast('Error loading fields: ' + err.message, 'error');
+    }
+}
+
+function autoDetectMappings() {
+    // Heuristic: try to auto-match PDF field names to our data fields
+    const selects = document.querySelectorAll('#fieldMapContent select[data-pdf-field]');
+    let matched = 0;
+
+    const patterns = [
+        { regex: /first.?name|fname|given/i, key: 'first_name' },
+        { regex: /last.?name|lname|surname|family/i, key: 'last_name' },
+        { regex: /full.?name|your.?name|taxpayer.?name|^name$/i, key: 'full_name' },
+        { regex: /business.?name|company|entity|dba/i, key: 'business_name' },
+        { regex: /social.?sec|ssn/i, key: 'ssn' },
+        { regex: /employer.*id|^ein$/i, key: 'ein' },
+        { regex: /street|address.*1|mailing|address.*line/i, key: 'address' },
+        { regex: /\bcity\b/i, key: 'city' },
+        { regex: /\bstate\b/i, key: 'state' },
+        { regex: /\bzip\b|postal/i, key: 'zip' },
+        { regex: /city.*state.*zip/i, key: 'city_state_zip' },
+        { regex: /phone|telephone/i, key: 'phone' },
+        { regex: /email/i, key: 'email' },
+        { regex: /date.*birth|dob/i, key: 'date_of_birth' },
+        { regex: /filing.?status/i, key: 'filing_status' },
+        { regex: /tax.?class|federal.?tax/i, key: 'federal_tax_classification' },
+        { regex: /employer.*name/i, key: 'employer_name' },
+        { regex: /payer.*name/i, key: 'payer_name' },
+        { regex: /wages|compensation/i, key: 'wages_tips' },
+        { regex: /fed.*withh/i, key: 'federal_tax_withheld' },
+        { regex: /account/i, key: 'account_numbers' },
+        { regex: /requester/i, key: 'requester_name' },
+    ];
+
+    selects.forEach(select => {
+        if (select.value) return; // Already mapped, skip
+        const pdfField = select.dataset.pdfField.toLowerCase();
+        for (const p of patterns) {
+            if (p.regex.test(pdfField)) {
+                select.value = p.key;
+                select.style.backgroundColor = '#e8f5e9';
+                matched++;
+                break;
+            }
+        }
+    });
+
+    showToast(`Auto-detected ${matched} field mappings. Review and save.`, matched > 0 ? 'success' : 'info');
+}
+
+async function saveFieldMappings() {
+    if (!fieldMapTemplateId) return;
+
+    // Build mappings: { data_key: pdf_field_name }
+    const mappings = {};
+    const selects = document.querySelectorAll('#fieldMapContent select[data-pdf-field]');
+
+    selects.forEach(select => {
+        const pdfFieldName = select.dataset.pdfField;
+        const dataKey = select.value;
+        if (dataKey) {
+            mappings[dataKey] = pdfFieldName;
+        }
+    });
+
+    try {
+        await api(`/api/templates/${fieldMapTemplateId}/mappings`, {
+            method: 'PUT',
+            body: JSON.stringify({ field_mappings: mappings })
+        });
+        showToast('Field mappings saved! PDF generation will now use these mappings.', 'success');
+        closeModal('fieldMapModal');
+    } catch (err) {
+        showToast('Error saving mappings: ' + err.message, 'error');
     }
 }
 

@@ -490,6 +490,29 @@
         </div>
     </div>
 
+    <!-- Field Mapping Modal -->
+    <div class="modal-overlay" id="fieldMapModal">
+        <div class="modal" style="max-width: 900px; max-height: 90vh;">
+            <div class="modal-header">
+                <h3 id="fieldMapTitle">Map PDF Fields</h3>
+                <button class="modal-close" onclick="closeModal('fieldMapModal')">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 65vh; overflow-y: auto;">
+                <div class="alert alert-info" style="margin-bottom: 15px;">
+                    🔗 Map each PDF form field to your data field. This tells the system which data goes into which PDF field when generating documents. Fields with <span style="color: green;">✅ Auto-matched</span> were detected automatically.
+                </div>
+                <div id="fieldMapContent">
+                    <div class="loading"><div class="spinner"></div> Loading PDF fields...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('fieldMapModal')">Cancel</button>
+                <button class="btn btn-success" onclick="autoDetectMappings()">🔍 Auto-Detect</button>
+                <button class="btn btn-primary" onclick="saveFieldMappings()">💾 Save Mappings</button>
+            </div>
+        </div>
+    </div>
+
     <!-- View Customer Detail Modal -->
     <div class="modal-overlay" id="customerDetailModal">
         <div class="modal" style="max-width: 700px;">
