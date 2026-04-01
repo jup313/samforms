@@ -276,13 +276,19 @@
                     <h2>Template Management</h2>
                     <span class="breadcrumb">Upload & manage IRS form PDF templates</span>
                 </div>
-                <button class="btn btn-primary" onclick="showAddTemplateModal()">
-                    ➕ Add New Template
-                </button>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-success" onclick="downloadAllIrsPdfs()" id="btnDownloadAll">
+                        🌐 Download All from IRS
+                    </button>
+                    <button class="btn btn-primary" onclick="showAddTemplateModal()">
+                        ➕ Add New Template
+                    </button>
+                </div>
             </div>
 
             <div class="alert alert-info">
-                💡 Upload IRS PDF forms here. When the IRS updates a form, upload the new version — the old one will be archived automatically.
+                💡 Upload IRS PDF forms here, or click <strong>🌐 Download from IRS</strong> on any template to automatically fetch the latest PDF from IRS.gov. 
+                Use <strong>Download All from IRS</strong> to batch-download all missing PDFs at once.
             </div>
 
             <div class="card">

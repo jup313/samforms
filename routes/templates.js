@@ -4,6 +4,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { PDFDocument } = require('pdf-lib');
+const https = require('https');
+const http = require('http');
 
 // Configure multer for PDF uploads
 const storage = multer.diskStorage({
@@ -42,6 +44,57 @@ router.get('/', (req, res) => {
             templates = db.prepare('SELECT * FROM templates ORDER BY form_type, active DESC').all();
         }
         res.json(templates);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get available IRS PDF URLs (must be before /:id routes)
+router.get('/irs/available', (req, res) => {
+    const irsPdfUrls = req.app.locals.irsPdfUrls || {};
+    res.json(irsPdfUrls);
+});
+
+// Download all IRS PDFs for templates that don't have one yet (must be before /:id routes)
+router.post('/irs/download-all', async (req, res) => {
+    const db = req.app.locals.db;
+    try {
+        const irsPdfUrls = req.app.locals.irsPdfUrls || {};
+        const templates = db.prepare('SELECT * FROM templates WHERE active = 1 AND (file_path IS NULL OR file_path = \'\')').all();
+        
+        const results = { success: [], failed: [], skipped: [] };
+
+        for (const template of templates) {
+            const irsUrl = irsPdfUrls[template.form_type];
+            if (!irsUrl) {
+                results.skipped.push({ form_type: template.form_type, reason: 'No IRS URL mapped' });
+                continue;
+            }
+
+            try {
+                const filename = `${template.form_type.replace(/[^a-zA-Z0-9-]/g, '_')}_IRS_${Date.now()}.pdf`;
+                const filePath = path.join(req.app.locals.rootDir, 'pdf-templates', 'active', filename);
+                const relativePath = path.join('pdf-templates', 'active', filename);
+
+                await downloadFile(irsUrl, filePath);
+
+                db.prepare(`
+                    UPDATE templates SET file_path = ?, version_year = ?, upload_date = CURRENT_TIMESTAMP WHERE id = ?
+                `).run(relativePath, new Date().getFullYear().toString(), template.id);
+
+                results.success.push(template.form_type);
+            } catch (err) {
+                results.failed.push({ form_type: template.form_type, error: err.message });
+            }
+
+            // Small delay to be nice to IRS servers
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        res.json({
+            message: `Downloaded ${results.success.length} PDFs, ${results.failed.length} failed, ${results.skipped.length} skipped`,
+            results
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -200,6 +253,120 @@ router.put('/:id', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// Download PDF from IRS.gov for a template
+router.post('/:id/download-irs', async (req, res) => {
+    const db = req.app.locals.db;
+    try {
+        const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
+        if (!template) return res.status(404).json({ error: 'Template not found' });
+
+        const irsPdfUrls = req.app.locals.irsPdfUrls || {};
+        const irsUrl = irsPdfUrls[template.form_type];
+        
+        if (!irsUrl) {
+            return res.status(400).json({ error: `No IRS URL mapped for form type: ${template.form_type}. You can manually upload a PDF instead.` });
+        }
+
+        // Download PDF from IRS
+        const filename = `${template.form_type.replace(/[^a-zA-Z0-9-]/g, '_')}_IRS_${Date.now()}.pdf`;
+        const filePath = path.join(req.app.locals.rootDir, 'pdf-templates', 'active', filename);
+        const relativePath = path.join('pdf-templates', 'active', filename);
+
+        await downloadFile(irsUrl, filePath);
+
+        // Archive old PDF if exists
+        if (template.file_path && template.file_path !== '') {
+            const oldPath = path.join(req.app.locals.rootDir, template.file_path);
+            if (fs.existsSync(oldPath)) {
+                const archivePath = path.join(req.app.locals.rootDir, 'pdf-templates', 'archive',
+                    `${template.form_type}_${template.version_year}_${Date.now()}.pdf`);
+                fs.copyFileSync(oldPath, archivePath);
+                fs.unlinkSync(oldPath);
+            }
+        }
+
+        // Try to detect PDF form fields
+        let pdfFields = [];
+        try {
+            const pdfBytes = fs.readFileSync(filePath);
+            const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+            const form = pdfDoc.getForm();
+            pdfFields = form.getFields().map(f => ({
+                name: f.getName(),
+                type: f.constructor.name
+            }));
+        } catch (e) {
+            // PDF might not have form fields
+        }
+
+        // Update template with new file path
+        db.prepare(`
+            UPDATE templates SET 
+                file_path = ?,
+                version_year = ?,
+                upload_date = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(relativePath, new Date().getFullYear().toString(), req.params.id);
+
+        const updated = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
+        res.json({ 
+            success: true, 
+            template: updated, 
+            pdfFields,
+            message: `Successfully downloaded ${template.form_type} PDF from IRS.gov (${pdfFields.length} form fields detected)`
+        });
+    } catch (err) {
+        res.status(500).json({ error: `Failed to download from IRS: ${err.message}` });
+    }
+});
+
+// Helper: download file from URL with redirect following
+function downloadFile(url, destPath) {
+    return new Promise((resolve, reject) => {
+        const makeRequest = (requestUrl, redirectCount = 0) => {
+            if (redirectCount > 5) return reject(new Error('Too many redirects'));
+            
+            const protocol = requestUrl.startsWith('https') ? https : http;
+            protocol.get(requestUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; IRS-Forms-Manager/1.0)'
+                }
+            }, (response) => {
+                // Handle redirects
+                if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                    return makeRequest(response.headers.location, redirectCount + 1);
+                }
+
+                if (response.statusCode !== 200) {
+                    return reject(new Error(`HTTP ${response.statusCode}: Failed to download`));
+                }
+
+                const fileStream = fs.createWriteStream(destPath);
+                response.pipe(fileStream);
+                fileStream.on('finish', () => {
+                    fileStream.close();
+                    // Verify it's actually a PDF (check first bytes)
+                    const header = Buffer.alloc(5);
+                    const fd = fs.openSync(destPath, 'r');
+                    fs.readSync(fd, header, 0, 5, 0);
+                    fs.closeSync(fd);
+                    if (header.toString() !== '%PDF-') {
+                        fs.unlinkSync(destPath);
+                        return reject(new Error('Downloaded file is not a valid PDF'));
+                    }
+                    resolve();
+                });
+                fileStream.on('error', (err) => {
+                    fs.unlink(destPath, () => {});
+                    reject(err);
+                });
+            }).on('error', reject);
+        };
+
+        makeRequest(url);
+    });
+}
 
 // Delete template (archive it)
 router.delete('/:id', (req, res) => {

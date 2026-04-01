@@ -667,6 +667,7 @@ async function loadTemplates() {
                 <td>${t.upload_date ? new Date(t.upload_date).toLocaleDateString() : 'N/A'}</td>
                 <td>
                     <div class="actions">
+                        <button class="btn btn-sm btn-success" onclick="downloadIrsPdf(${t.id}, '${t.form_type}')" title="Download from IRS.gov" id="irsBtn_${t.id}">🌐</button>
                         <button class="btn btn-sm btn-primary" onclick="showUploadForTemplate(${t.id}, '${t.form_type}')" title="Upload/Update PDF">📤</button>
                         ${t.file_path && t.file_path !== '' ? `<a href="/${t.file_path}" target="_blank" class="btn btn-sm btn-outline" title="View PDF">👁️</a>` : ''}
                         ${t.active ? `<button class="btn btn-sm btn-danger" onclick="archiveTemplate(${t.id})" title="Archive">📦</button>` : ''}
@@ -777,6 +778,59 @@ async function archiveTemplate(id) {
         loadTemplates();
     } catch (err) {
         showToast('Error archiving template: ' + err.message, 'error');
+    }
+}
+
+// ==================== IRS PDF DOWNLOAD ====================
+async function downloadIrsPdf(templateId, formType) {
+    const btn = document.getElementById(`irsBtn_${templateId}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳';
+    }
+    showToast(`Downloading ${formType} from IRS.gov...`, 'info');
+
+    try {
+        const result = await api(`/api/templates/${templateId}/download-irs`, { method: 'POST' });
+        showToast(result.message || `${formType} PDF downloaded successfully!`, 'success');
+        if (result.pdfFields && result.pdfFields.length > 0) {
+            showToast(`Detected ${result.pdfFields.length} fillable fields in ${formType}`, 'info');
+        }
+        loadTemplates();
+    } catch (err) {
+        showToast(`Failed to download ${formType}: ${err.message}`, 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🌐';
+        }
+    }
+}
+
+async function downloadAllIrsPdfs() {
+    if (!confirm('Download all missing IRS PDFs? This may take a few minutes for many templates.')) return;
+
+    const btn = document.getElementById('btnDownloadAll');
+    btn.disabled = true;
+    btn.textContent = '⏳ Downloading...';
+    showToast('Batch downloading PDFs from IRS.gov — please wait...', 'info');
+
+    try {
+        const result = await api('/api/templates/irs/download-all', { method: 'POST' });
+        showToast(result.message, 'success');
+
+        if (result.results.failed.length > 0) {
+            showToast(`Failed: ${result.results.failed.map(f => f.form_type).join(', ')}`, 'error');
+        }
+        if (result.results.skipped.length > 0) {
+            showToast(`Skipped (no IRS URL): ${result.results.skipped.map(f => f.form_type).join(', ')}`, 'info');
+        }
+
+        loadTemplates();
+    } catch (err) {
+        showToast('Batch download error: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🌐 Download All from IRS';
     }
 }
 
