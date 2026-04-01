@@ -137,6 +137,10 @@ const IRS_PDF_URLS = {
     '1023-EZ': 'https://www.irs.gov/pub/irs-pdf/f1023ez.pdf',
     '1024': 'https://www.irs.gov/pub/irs-pdf/f1024.pdf',
     '1310': 'https://www.irs.gov/pub/irs-pdf/f1310.pdf',
+    '433-A': 'https://www.irs.gov/pub/irs-pdf/f433a.pdf',
+    '433-B': 'https://www.irs.gov/pub/irs-pdf/f433b.pdf',
+    '433-D': 'https://www.irs.gov/pub/irs-pdf/f433d.pdf',
+    '433-F': 'https://www.irs.gov/pub/irs-pdf/f433f.pdf',
 };
 app.locals.irsPdfUrls = IRS_PDF_URLS;
 
@@ -229,6 +233,11 @@ function seedDefaultTemplates() {
         { form_type: '8332', form_name: 'Release/Revocation of Release of Claim to Exemption', version_year: '2024' },
         { form_type: '8379', form_name: 'Injured Spouse Allocation', version_year: '2024' },
         { form_type: '8453', form_name: 'U.S. Individual Income Tax Transmittal for an IRS e-file Return', version_year: '2024' },
+        // Collection / Installment Agreement forms
+        { form_type: '433-A', form_name: 'Collection Information Statement for Wage Earners and Self-Employed Individuals', version_year: '2024' },
+        { form_type: '433-B', form_name: 'Collection Information Statement for Businesses', version_year: '2024' },
+        { form_type: '433-D', form_name: 'Installment Agreement', version_year: '2024' },
+        { form_type: '433-F', form_name: 'Collection Information Statement', version_year: '2024' },
     ];
 
     const insert = db.prepare(`

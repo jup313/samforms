@@ -104,6 +104,10 @@ const IRS_PDF_URLS = {
     '990': 'https://www.irs.gov/pub/irs-pdf/f990.pdf',
     '990-EZ': 'https://www.irs.gov/pub/irs-pdf/f990ez.pdf',
     '1310': 'https://www.irs.gov/pub/irs-pdf/f1310.pdf',
+    '433-A': 'https://www.irs.gov/pub/irs-pdf/f433a.pdf',
+    '433-B': 'https://www.irs.gov/pub/irs-pdf/f433b.pdf',
+    '433-D': 'https://www.irs.gov/pub/irs-pdf/f433d.pdf',
+    '433-F': 'https://www.irs.gov/pub/irs-pdf/f433f.pdf',
 };
 
 // ==================== DOWNLOAD HELPER ====================
