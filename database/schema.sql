@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS form_submissions (
     customer_id INTEGER,
     template_id INTEGER,
     form_type TEXT NOT NULL,
+    tax_year TEXT DEFAULT '2025',
     form_data TEXT DEFAULT '{}',
     status TEXT DEFAULT 'draft',
     pdf_path TEXT,

@@ -62,7 +62,8 @@ router.get('/:id', (req, res) => {
 router.post('/', async (req, res) => {
     const db = req.app.locals.db;
     try {
-        const { template_id, customer_id, form_data, save_customer, generate_pdf } = req.body;
+        const { template_id, customer_id, form_data, save_customer, generate_pdf, tax_year } = req.body;
+    const selectedTaxYear = tax_year || new Date().getFullYear().toString();
 
         // Get template
         const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(template_id);
@@ -132,11 +133,11 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Save form submission
+        // Save form submission with tax year
         const submission = db.prepare(`
-            INSERT INTO form_submissions (customer_id, template_id, form_type, form_data, status)
-            VALUES (?, ?, ?, ?, 'completed')
-        `).run(finalCustomerId || null, template_id, template.form_type, JSON.stringify(form_data));
+            INSERT INTO form_submissions (customer_id, template_id, form_type, tax_year, form_data, status)
+            VALUES (?, ?, ?, ?, ?, 'completed')
+        `).run(finalCustomerId || null, template_id, template.form_type, selectedTaxYear, JSON.stringify(form_data));
 
         const submissionId = submission.lastInsertRowid;
         let pdfPath = null;

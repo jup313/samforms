@@ -153,15 +153,31 @@ async function selectFormTemplate(templateId) {
         document.getElementById('formStep3').style.display = 'none';
 
         document.getElementById('formTitle').textContent = `${currentTemplate.form_type} — ${currentTemplate.form_name}`;
-        document.getElementById('formTypeBadge').textContent = currentTemplate.version_year || '';
+        document.getElementById('formTypeBadge').textContent = '';
         document.getElementById('selectedCustomerId').value = '';
         document.getElementById('customerPickerInput').value = '';
+
+        // Populate tax year dropdown (2025-2200)
+        populateTaxYearDropdown();
 
         // Build dynamic form fields
         buildFormFields(currentTemplate);
         setupCustomerPicker();
     } catch (err) {
         showToast('Error loading template: ' + err.message, 'error');
+    }
+}
+
+function populateTaxYearDropdown() {
+    const select = document.getElementById('taxYearSelect');
+    select.innerHTML = '';
+    const currentYear = new Date().getFullYear();
+    for (let year = 2025; year <= 2200; year++) {
+        const opt = document.createElement('option');
+        opt.value = year.toString();
+        opt.textContent = year.toString();
+        if (year === currentYear) opt.selected = true;
+        select.appendChild(opt);
     }
 }
 
@@ -400,6 +416,8 @@ async function submitForm() {
     const saveCustomer = document.getElementById('saveCustomerCheck').checked;
     const generatePdf = document.getElementById('generatePdfCheck').checked;
 
+    const taxYear = document.getElementById('taxYearSelect').value;
+
     try {
         const result = await api('/api/forms', {
             method: 'POST',
@@ -408,7 +426,8 @@ async function submitForm() {
                 customer_id: customerId ? parseInt(customerId) : null,
                 form_data: formData,
                 save_customer: saveCustomer,
-                generate_pdf: generatePdf
+                generate_pdf: generatePdf,
+                tax_year: taxYear
             })
         });
 
@@ -416,7 +435,7 @@ async function submitForm() {
         document.getElementById('formStep2').style.display = 'none';
         document.getElementById('formStep3').style.display = 'block';
 
-        const msg = [`Form ${currentTemplate.form_type} saved for ${formData.first_name} ${formData.last_name}.`];
+        const msg = [`Form ${currentTemplate.form_type} (Tax Year ${taxYear}) saved for ${formData.first_name} ${formData.last_name}.`];
         if (result.customer_id && saveCustomer && !customerId) {
             msg.push('New customer added to database.');
         }
@@ -782,7 +801,7 @@ async function loadHistory() {
 
         const tbody = document.getElementById('historyTableBody');
         if (forms.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📋</div><p>No forms submitted yet</p></div></td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📋</div><p>No forms submitted yet</p></div></td></tr>`;
             return;
         }
 
@@ -790,6 +809,7 @@ async function loadHistory() {
             <tr>
                 <td>#${f.id}</td>
                 <td><strong>${f.form_type}</strong></td>
+                <td>${f.tax_year || 'N/A'}</td>
                 <td>${f.first_name ? `${f.last_name}, ${f.first_name}` : 'N/A'}</td>
                 <td><span class="badge badge-success">${f.status}</span></td>
                 <td>${new Date(f.created_at).toLocaleDateString()}</td>

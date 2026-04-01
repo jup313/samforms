@@ -146,6 +146,15 @@
                         <span class="badge badge-primary" id="formTypeBadge"></span>
                     </div>
                     <div class="card-body">
+                        <!-- Tax Year Selector -->
+                        <div style="margin-bottom: 20px;">
+                            <label style="font-weight: 600; margin-bottom: 6px; display: block;">📅 Tax Year</label>
+                            <select class="form-control" id="taxYearSelect" style="width: 200px; font-size: 16px; font-weight: 600;">
+                            </select>
+                        </div>
+
+                        <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border);">
+
                         <!-- Customer Picker -->
                         <div class="alert alert-info">
                             💡 Select an existing customer to auto-fill, or enter details manually for a new customer.
@@ -328,6 +337,7 @@
                                 <tr>
                                     <th>ID</th>
                                     <th>Form Type</th>
+                                    <th>Tax Year</th>
                                     <th>Customer</th>
                                     <th>Status</th>
                                     <th>Date</th>

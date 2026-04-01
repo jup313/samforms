@@ -29,6 +29,14 @@ db.pragma('foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'database', 'schema.sql'), 'utf8');
 db.exec(schema);
 
+// Migration: add tax_year column to form_submissions if not exists
+try {
+    db.prepare("SELECT tax_year FROM form_submissions LIMIT 1").get();
+} catch (e) {
+    db.exec("ALTER TABLE form_submissions ADD COLUMN tax_year TEXT DEFAULT '2025'");
+    console.log('Migration: added tax_year column to form_submissions');
+}
+
 // Make db available to routes
 app.locals.db = db;
 app.locals.rootDir = __dirname;
