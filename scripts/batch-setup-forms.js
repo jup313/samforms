@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
- * Batch IRS Form Setup Script
+ * Batch IRS Form Setup Script v2 — Improved Field Mapping
  * 
  * Downloads all IRS PDFs, inspects their fields, and auto-generates
  * field mappings for every template in the database.
+ * 
+ * KEY IMPROVEMENT: CamelCase-aware keyword matching on ALL fields,
+ * not just positional guesses on the first few.
+ * 
+ * Mapping format: { our_data_key: pdf_full_field_name }
  * 
  * Usage: node scripts/batch-setup-forms.js
  */
@@ -141,239 +146,369 @@ function downloadFile(url, destPath) {
     });
 }
 
-// ==================== AUTO-MAP FIELDS ====================
-// Analyzes PDF field names and auto-generates mappings to our data keys
+// ==================== NORMALIZE FIELD NAME ====================
+// Convert any PDF field name into searchable lowercase text
+// Handles CamelCase, underscores, dots, brackets
+function normalizeFieldName(fieldName) {
+    return fieldName
+        // Split CamelCase: "TaxpayerAddress" -> "Taxpayer Address"
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        // Remove array indices and common prefixes
+        .replace(/\[\d+\]/g, ' ')
+        .replace(/topmostSubform|form1|Form\d+/gi, ' ')
+        .replace(/Page\d+/gi, ' ')
+        // Replace separators
+        .replace(/[._\-]/g, ' ')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// ==================== DETERMINE PAGE NUMBER ====================
+function getPageNumber(fieldName) {
+    const match = fieldName.match(/Page(\d+)|page\[(\d+)\]|\.f(\d+)_/i);
+    if (match) {
+        if (match[1]) return parseInt(match[1]);
+        if (match[2]) return parseInt(match[2]) + 1;
+        if (match[3]) return parseInt(match[3]);
+    }
+    // Check for Copy sections (1099/W-2 style)
+    if (/CopyA|Copy\s*A/i.test(fieldName)) return 1;
+    if (/Copy1|CopyB|Copy\s*B/i.test(fieldName)) return 2;
+    return 1;
+}
+
+// ==================== KEYWORD-BASED FIELD MATCHER ====================
+// Returns the data key for a given normalized field name, or null
+function matchFieldToDataKey(normalized, fullName, formType) {
+    const s = normalized;
+    
+    // ---- Name fields ----
+    if (/taxpayer\s*name|your\s*name|name\s*shown|name\s*on\s*(your|the)\s*(return|tax)/.test(s)) return 'full_name';
+    if (/first\s*name|fname|given\s*name/.test(s)) return 'first_name';
+    if (/last\s*name|lname|surname|family\s*name/.test(s)) return 'last_name';
+    if (/print\s*name\s*taxpayer/.test(s)) return 'full_name';
+    if (/print\s*name/.test(s)) return 'full_name';
+
+    // ---- Business name ----
+    if (/business\s*name|company|entity\s*name|organization\s*name|corporation\s*name|trade\s*name|dba/.test(s)) return 'business_name';
+
+    // ---- Tax IDs ----
+    if (/taxpayer\s*id\s*ssn/.test(s)) return 'ssn';
+    if (/taxpayer\s*id\s*itin/.test(s)) return 'ssn';
+    if (/taxpayer\s*id\s*ein/.test(s)) return 'ein';
+    if (/social\s*security|your\s*ssn|taxpayer\s*ssn/.test(s)) return 'ssn';
+    if (/identifying\s*number|ident\s*no/.test(s)) return 'ssn';
+    if (/employer\s*id\s*number|employer\s*identification|\bein\b/.test(s)) return 'ein';
+    // For W-2/1099 payer TIN
+    if (/payer.?s?\s*tin|payer.?s?\s*federal|payer.?s?\s*id/.test(s)) return 'payer_ein';
+
+    // ---- Addresses ----
+    if (/taxpayer\s*address/.test(s)) return 'address';
+    if (/city\s*state\s*zip|city\s*town\s*state/.test(s)) return 'city_state_zip';
+    // Taxpayer/personal address - not payer/employer/representative
+    if (/\baddress\b/.test(s) && !/payer|employer|represent|filer|lender|issuer|donee/.test(s)) {
+        // Check if part of address read order or main address
+        if (/address\s*read\s*order/.test(s) || /home|mailing|street|your|taxpayer/.test(s) || 
+            (/\baddress\b/.test(s) && !/read\s*order/.test(s))) return 'address';
+    }
+    if (/\bcity\b/.test(s) && !/payer|employer|donee/.test(s)) return 'city';
+    if (/\bstate\b/.test(s) && !/united|payer|employer|donee/.test(s)) return 'state';
+    if (/\bzip\b|postal\s*code/.test(s) && !/payer|employer|donee/.test(s)) return 'zip';
+
+    // ---- Contact ----
+    if (/taxpayer\s*telephone|your\s*phone|daytime\s*phone|home\s*phone|\btelephone\b/.test(s) && !/fax|payer|employer|represent/.test(s)) return 'phone';
+    if (/\bemail\b|\be\s*mail\b/.test(s)) return 'email';
+
+    // ---- Filing status ----
+    if (/filing\s*status/.test(s)) return 'filing_status';
+    if (/date\s*of?\s*birth|dob|birth\s*date/.test(s)) return 'date_of_birth';
+
+    // ---- Payer/employer fields (for 1099s, W-2s, 1098s) ----
+    if (/payer\s*name|payer.?s\s*name|filer\s*name|lender\s*name|issuer\s*name/.test(s)) return 'payer_name';
+    if (/payer\s*address|payer.?s\s*address|filer\s*address/.test(s)) return 'payer_address';
+    if (/employer\s*name/.test(s)) return 'employer_name';
+    if (/employer\s*address/.test(s)) return 'employer_address';
+
+    // ---- Recipient fields (for 1099s, W-2s) ----
+    if (/recipient\s*name|payee\s*name|employee\s*name|borrower\s*name|student\s*name/.test(s)) return 'full_name';
+    if (/recipient\s*tin|recipient.?s?\s*id|payee.?s?\s*tin|employee.?s?\s*ssn/.test(s)) return 'ssn';
+    if (/recipient\s*address|payee\s*address|employee\s*address|borrower\s*address/.test(s)) return 'address';
+
+    // ---- POA / 2848 / 8821 specific ----
+    if (/representative.?s?\s*name\s*\d?$/.test(s)) return 'representative_name';
+    if (/representative.?s?\s*address/.test(s)) return 'representative_address';
+    if (/\bcaf\s*number/.test(s)) return 'caf_number';
+    if (/\bptin\b/.test(s)) return 'ptin';
+    if (/telephone\s*no|phone\s*no/.test(s) && /represent|\d/.test(s)) return 'representative_phone';
+    if (/fax\s*no/.test(s)) return 'representative_fax';
+    if (/description\s*\d/.test(s) && /line\s*3|table\s*line\s*3/.test(s)) return 'tax_matters';
+    if (/tax\s*form\s*\d/.test(s)) return 'tax_form_number';
+    if (/years?\s*\d/.test(s) && /line\s*3|table\s*line\s*3/.test(s)) return 'tax_years';
+    if (/designation\s*\d/.test(s)) return 'representative_designation';
+    if (/jurisdiction\s*\d/.test(s)) return 'representative_jurisdiction';
+    if (/\bbar\s*\d/.test(s)) return 'representative_bar_number';
+    if (/additional\s*acts/.test(s)) return 'specific_acts';
+    if (/other\s*acts/.test(s)) return 'specific_acts';
+    if (/specific\s*deletion/.test(s)) return 'specific_deletions';
+    if (/taxpayer\s*plan\s*number/.test(s)) return 'plan_number';
+
+    // ---- Designee fields (8821) ----
+    if (/designee\s*name/.test(s)) return 'designee_name';
+    if (/designee\s*phone|\bdesignee\b.*telephone/.test(s)) return 'designee_phone';
+    if (/designee\s*fax/.test(s)) return 'designee_fax';
+
+    // ---- W-9 specific ----
+    if (/tax\s*class|federal\s*tax\s*class/.test(s)) return 'federal_tax_classification';
+    if (/exempt\s*payee/.test(s)) return 'exempt_payee_code';
+    if (/fatca/.test(s)) return 'exemption_fatca_code';
+    if (/account\s*num/.test(s)) return 'account_numbers';
+    if (/requester/.test(s)) return 'requester_name';
+
+    // ---- Section info ----
+    if (/section\s*(a|b|c|d|e)/.test(s) && /signature/.test(s)) return null; // skip signature fields
+
+    return null;
+}
+
+// ==================== HARD-CODED FORM MAPS (cryptic field names) ====================
+// For forms where field names are totally cryptic (f1_01, f1_02, etc.)
+// Format: { short_field_name: our_data_key }
+const KNOWN_POSITIONAL_MAPS = {
+    'W-9': {
+        'f1_01': 'full_name',
+        'f1_02': 'business_name',
+        'f1_05': 'exempt_payee_code',
+        'f1_06': 'exemption_fatca_code',
+        'f1_07': 'address',
+        'f1_08': 'city_state_zip',
+        'f1_09': 'requester_name',
+        'f1_10': 'account_numbers',
+        'f1_11': 'ssn_1',
+        'f1_12': 'ssn_2',
+        'f1_13': 'ssn_3',
+        'f1_14': 'ein_1',
+        'f1_15': 'ein_2',
+    },
+    'W-4': {
+        'f1_01': 'first_name',
+        'f1_02': 'last_name',
+        'f1_03': 'ssn',
+        'f1_04': 'address',
+        'f1_05': 'city_state_zip',
+        'f1_06': 'extra_withholding',
+        'f2_01': 'employer_name',
+        'f2_02': 'employer_ein',
+        'f2_03': 'first_date_of_employment',
+    },
+    '1040': {
+        'f1_01': 'full_name',
+        'f1_02': 'full_name',      // Spouse name (can be re-mapped later)
+        'f1_03': 'ssn',
+        'f1_04': 'city_state_zip',
+        'f1_05': 'ssn',            // Spouse SSN
+        'f1_20': 'address',        // Address line
+        'f1_21': 'address',        // Apt number
+        'f1_22': 'city',
+        'f1_23': 'state',
+        'f1_24': 'zip',
+        'f1_25': 'foreign_country',
+        'f1_26': 'foreign_province',
+        'f1_27': 'foreign_postal',
+        'f2_01': 'full_name',      // Page 2 repeat
+        'f2_02': 'ssn',            // Page 2 repeat
+    },
+    '1040-SR': {
+        'f1_01': 'full_name',
+        'f1_02': 'full_name',
+        'f1_03': 'ssn',
+        'f1_04': 'city_state_zip',
+        'f2_01': 'full_name',
+        'f2_02': 'ssn',
+    },
+    '1040-X': {
+        'f1_01': 'full_name',
+        'f1_02': 'full_name',
+        'f1_03': 'ssn',
+        'f1_04': 'city_state_zip',
+    },
+    '1040-V': {
+        'f1_1': 'full_name',
+        'f1_2': 'ssn',
+        'f1_3': 'full_name',       // Spouse name
+        'f1_4': 'ssn',             // Spouse SSN
+        'f1_5': 'city_state_zip',
+        'f1_6': 'address',
+    },
+    '8283': {
+        'f1_1': 'full_name',
+        'f1_2': 'ssn',
+        'f1_4': 'city_state_zip',
+        'f2_1': 'full_name',
+        'f2_2': 'ssn',
+    },
+    '8821': {
+        'f1_1': 'full_name',
+        'f1_2': 'ssn',
+        'f1_3': 'address',
+        'f1_4': 'city_state_zip',
+        'f1_5': 'phone',
+        'f1_6': 'designee_name',
+        'f1_7': 'designee_phone',
+        'f1_8': 'designee_fax',
+        'f1_9': 'caf_number',
+        // Line 3 table rows
+        'f1_20': 'tax_matters',
+        'f1_21': 'tax_form_number',
+        'f1_22': 'tax_years',
+    },
+    '4506-T': {
+        'f1_1': 'full_name',
+        'f1_2': 'ssn',
+        'f1_3': 'full_name',      // Spouse
+        'f1_4': 'ssn',            // Spouse SSN
+        'f1_5': 'address',
+        'f1_6': 'city_state_zip',
+    },
+    '8822': {
+        'f1_1': 'full_name',
+        'f1_2': 'ssn',
+        'f1_3': 'full_name',
+        'f1_4': 'ssn',
+        'f1_5': 'address',        // Old address
+        'f1_6': 'city_state_zip', // Old city/state/zip
+    },
+    '8822-B': {
+        'f1_1': 'business_name',
+        'f1_2': 'ein',
+        'f1_3': 'address',
+        'f1_4': 'city_state_zip',
+    },
+};
+
+// ==================== AUTO-MAP FIELDS (v2) ====================
 function autoMapFields(formType, fieldInfos) {
     const mappings = {};
-    
-    // Get only Page 1 text fields sorted by field number
-    const page1TextFields = fieldInfos
-        .filter(f => f.type === 'PDFTextField' && /page1|page\[0\]|\.f1_/i.test(f.fullName))
-        .sort((a, b) => {
-            const numA = parseInt((a.shortName.match(/\d+$/) || ['999'])[0]);
-            const numB = parseInt((b.shortName.match(/\d+$/) || ['999'])[0]);
-            return numA - numB;
-        });
-    
-    // Get Page 2 text fields
-    const page2TextFields = fieldInfos
-        .filter(f => f.type === 'PDFTextField' && /page2|page\[1\]|\.f2_/i.test(f.fullName))
-        .sort((a, b) => {
-            const numA = parseInt((a.shortName.match(/\d+$/) || ['999'])[0]);
-            const numB = parseInt((b.shortName.match(/\d+$/) || ['999'])[0]);
-            return numA - numB;
-        });
+    const usedPdfFields = new Set();  // Track which PDF fields are already mapped
 
-    // ==================== FORM-SPECIFIC PATTERNS ====================
-    // Most IRS forms follow conventions where the first few fields are:
-    // Field 1: Name / Taxpayer name
-    // Field 2: SSN or EIN or secondary name
-    // Field 3-4: Address info or secondary ID
-    
-    // Determine form category for mapping strategy
-    const isIndividualForm = ['1040', '1040-SR', '1040-X', '1040-ES', '1040-V',
-        '1040-Schedule-A', '1040-Schedule-B', '1040-Schedule-C', '1040-Schedule-D',
-        '1040-Schedule-E', '1040-Schedule-SE',
-        '2210', '3903', '4868', '5695', '6251', '8283', '8332', '8379',
-        '8453', '8606', '8829', '8862', '8863', '8879', '8888', '8889',
-        '8936', '8938', '8949', '8959', '8960', '8995', '9465', '14039',
-        '1310', '8867'].includes(formType);
-    
-    const isBusinessForm = ['1065', '1120', '1120-S', '2553', 'SS-4', 'SS-8',
-        '940', '941', '943', '944', '945', '7004', '990', '990-EZ'].includes(formType);
-    
-    const isEmployerInfoForm = ['W-2', '1099-NEC', '1099-MISC', '1099-INT', '1099-DIV',
-        '1099-R', '1099-G', '1099-K', '1099-B', '1099-S',
-        '1098', '1098-T', '1098-E'].includes(formType);
-    
-    const isAuthForm = ['2848', '8821', '4506-T'].includes(formType);
-    const isWForm = ['W-4', 'W-7', 'W-8BEN', 'W-9'].includes(formType);
-
-    // For each field, try to match by examining field name patterns
+    // Step 1: Try keyword matching on ALL text fields
     for (const field of fieldInfos) {
-        const fn = field.fullName.toLowerCase();
-        const sn = field.shortName.toLowerCase();
-        
-        // Skip non-text fields for primary mapping
         if (field.type !== 'PDFTextField') continue;
+
+        const normalized = normalizeFieldName(field.fullName);
+        const pageNum = getPageNumber(field.fullName);
         
-        // ---- Universal keyword matching on field names ----
-        // Many IRS PDFs have descriptive field names in their full path
+        let dataKey = matchFieldToDataKey(normalized, field.fullName, formType);
         
-        // Name patterns
-        if (/taxpayer.*name|your.*name|name.*return|name.*shown/i.test(fn) && !mappings.full_name) {
-            mappings.full_name = field.fullName;
-        }
-        if (/first.*name/i.test(fn) && !mappings.first_name) {
-            mappings.first_name = field.fullName;
-        }
-        if (/last.*name/i.test(fn) && !mappings.last_name) {
-            mappings.last_name = field.fullName;
-        }
-        
-        // SSN patterns
-        if (/social.*security|your.*ssn|taxpayer.*ssn/i.test(fn) && !mappings.ssn) {
-            mappings.ssn = field.fullName;
-        }
-        if (/identifying.*number|ident.*no/i.test(fn) && !mappings.ssn) {
-            mappings.ssn = field.fullName;
-        }
-        
-        // EIN patterns
-        if (/employer.*ident|ein\b/i.test(fn) && !mappings.ein) {
-            mappings.ein = field.fullName;
-        }
-        
-        // Address patterns
-        if (/address|street/i.test(fn) && !/email|web|url/i.test(fn) && !mappings.address) {
-            mappings.address = field.fullName;
-        }
-        if (/\bcity\b/i.test(fn) && !mappings.city) {
-            mappings.city = field.fullName;
-        }
-        if (/\bstate\b/i.test(fn) && !mappings.state) {
-            mappings.state = field.fullName;
-        }
-        if (/\bzip\b|postal/i.test(fn) && !mappings.zip) {
-            mappings.zip = field.fullName;
-        }
-        if (/city.*state.*zip/i.test(fn) && !mappings.city_state_zip) {
-            mappings.city_state_zip = field.fullName;
-        }
-        
-        // Business name
-        if (/business.*name|company|corporation|entity|organization/i.test(fn) && !mappings.business_name) {
-            mappings.business_name = field.fullName;
-        }
-        
-        // Phone
-        if (/phone|telephone|daytime/i.test(fn) && !mappings.phone) {
-            mappings.phone = field.fullName;
-        }
-        
-        // Email
-        if (/email|e-mail/i.test(fn) && !mappings.email) {
-            mappings.email = field.fullName;
+        if (dataKey) {
+            // If this key is already mapped, add page suffix for page 2+
+            const mappingKey = (pageNum > 1 && mappings[dataKey]) ? `${dataKey}_p${pageNum}` : dataKey;
+            
+            if (!mappings[mappingKey]) {
+                mappings[mappingKey] = field.fullName;
+                usedPdfFields.add(field.fullName);
+            }
         }
     }
 
-    // ---- Positional mapping for cryptic field names (f1_1, f1_2, etc.) ----
-    // Only apply if we haven't already matched descriptive names
-    if (page1TextFields.length > 0 && Object.keys(mappings).length < 3) {
-        // Most IRS forms: first field = name, second = SSN/EIN or business name
-        
-        if (isIndividualForm) {
-            // Individual forms: Name, SSN
-            if (page1TextFields[0] && !hasMapping(mappings, 'full_name')) {
-                mappings.full_name = page1TextFields[0].fullName;
-            }
-            if (page1TextFields[1] && !hasMapping(mappings, 'ssn')) {
-                mappings.ssn = page1TextFields[1].fullName;
-            }
-            // Fields 3-4 often address or additional info
-            if (page1TextFields.length > 2 && !hasMapping(mappings, 'address')) {
-                mappings.address = page1TextFields[2].fullName;
-            }
-            if (page1TextFields.length > 3 && !hasMapping(mappings, 'city_state_zip')) {
-                mappings.city_state_zip = page1TextFields[3].fullName;
-            }
-        } else if (isBusinessForm) {
-            // Business forms: Business Name, EIN, Address
-            if (page1TextFields[0] && !hasMapping(mappings, 'business_name')) {
-                mappings.business_name = page1TextFields[0].fullName;
-            }
-            if (page1TextFields[1] && !hasMapping(mappings, 'ein')) {
-                mappings.ein = page1TextFields[1].fullName;
-            }
-            if (page1TextFields.length > 2 && !hasMapping(mappings, 'address')) {
-                mappings.address = page1TextFields[2].fullName;
-            }
-            if (page1TextFields.length > 3 && !hasMapping(mappings, 'city_state_zip')) {
-                mappings.city_state_zip = page1TextFields[3].fullName;
-            }
-        } else if (isEmployerInfoForm) {
-            // 1099/1098/W-2: Payer info first, then recipient
-            // These are typically pre-printed by employer, but we map recipient fields
-            // Recipient fields are usually in the middle/second section
-            const halfIdx = Math.floor(page1TextFields.length / 3);
-            if (page1TextFields[0] && !hasMapping(mappings, 'payer_name')) {
-                mappings.payer_name = page1TextFields[0].fullName;
-            }
-            if (page1TextFields[1] && !hasMapping(mappings, 'payer_ein')) {
-                mappings.payer_ein = page1TextFields[1].fullName;
-            }
-            // Try to find recipient section
-            for (let i = 2; i < page1TextFields.length && i < 8; i++) {
-                const fn = page1TextFields[i].fullName.toLowerCase();
-                if (/recip|payee|employee|borrower|student/i.test(fn)) {
-                    if (!hasMapping(mappings, 'full_name')) {
-                        mappings.full_name = page1TextFields[i].fullName;
-                    }
-                    if (i + 1 < page1TextFields.length && !hasMapping(mappings, 'ssn')) {
-                        mappings.ssn = page1TextFields[i + 1].fullName;
-                    }
-                    break;
+    // Step 2: Apply known positional maps for forms with cryptic names
+    const knownMap = KNOWN_POSITIONAL_MAPS[formType];
+    if (knownMap) {
+        for (const field of fieldInfos) {
+            if (field.type !== 'PDFTextField') continue;
+            if (usedPdfFields.has(field.fullName)) continue;
+            
+            const shortName = field.shortName;
+            if (knownMap[shortName]) {
+                const dataKey = knownMap[shortName];
+                if (!mappings[dataKey]) {
+                    mappings[dataKey] = field.fullName;
+                    usedPdfFields.add(field.fullName);
                 }
-            }
-            // Fallback: if no keyword match, use positional for recipient
-            if (!hasMapping(mappings, 'full_name') && halfIdx < page1TextFields.length) {
-                mappings.full_name = page1TextFields[halfIdx].fullName;
-            }
-            if (!hasMapping(mappings, 'ssn') && halfIdx + 1 < page1TextFields.length) {
-                mappings.ssn = page1TextFields[halfIdx + 1].fullName;
-            }
-        } else if (isAuthForm) {
-            // Authorization forms: Taxpayer name, SSN/EIN, Address first
-            if (page1TextFields[0] && !hasMapping(mappings, 'full_name')) {
-                mappings.full_name = page1TextFields[0].fullName;
-            }
-            if (page1TextFields[1]) {
-                // Could be SSN, EIN, or address depending on form
-                if (!hasMapping(mappings, 'ssn')) {
-                    mappings.ssn = page1TextFields[1].fullName;
-                }
-            }
-            if (page1TextFields.length > 2 && !hasMapping(mappings, 'address')) {
-                mappings.address = page1TextFields[2].fullName;
-            }
-        } else if (isWForm) {
-            // W-forms have specific structures - handled by KNOWN_IRS_FIELD_MAPS mostly
-            // But add generic positional as fallback
-            if (page1TextFields[0] && !hasMapping(mappings, 'full_name')) {
-                mappings.full_name = page1TextFields[0].fullName;
-            }
-        } else {
-            // Generic: first field = name, second = SSN or EIN
-            if (page1TextFields[0] && !hasMapping(mappings, 'full_name')) {
-                mappings.full_name = page1TextFields[0].fullName;
-            }
-            if (page1TextFields[1] && !hasMapping(mappings, 'ssn')) {
-                mappings.ssn = page1TextFields[1].fullName;
             }
         }
     }
+
+    // Step 3: Positional fallback for common form patterns
+    // Separate fields by page
+    const page1Fields = fieldInfos
+        .filter(f => f.type === 'PDFTextField' && getPageNumber(f.fullName) === 1 && !usedPdfFields.has(f.fullName))
+        .sort((a, b) => {
+            const numA = parseInt((a.shortName.match(/\d+$/) || ['999'])[0]);
+            const numB = parseInt((b.shortName.match(/\d+$/) || ['999'])[0]);
+            return numA - numB;
+        });
     
-    // Also map Page 2 first fields if they look like name/SSN repeat (common in IRS forms)
-    if (page2TextFields.length >= 2) {
-        // Many IRS forms repeat name + SSN at the top of page 2
+    const page2Fields = fieldInfos
+        .filter(f => f.type === 'PDFTextField' && getPageNumber(f.fullName) === 2 && !usedPdfFields.has(f.fullName))
+        .sort((a, b) => {
+            const numA = parseInt((a.shortName.match(/\d+$/) || ['999'])[0]);
+            const numB = parseInt((b.shortName.match(/\d+$/) || ['999'])[0]);
+            return numA - numB;
+        });
+
+    // Form category detection
+    const isIndividualForm = /^(1040|Schedule|2210|3903|4868|5695|6251|8283|8332|8379|8453|8606|8829|8862|8863|8867|8879|8888|8889|8936|8938|8949|8959|8960|8995|9465|14039|1310|56|706|709)/i.test(formType);
+    const isBusinessForm = /^(1065|1120|2553|SS-4|SS-8|940|941|943|944|945|7004|990)/.test(formType);
+    const isInfoReturn = /^(1099|1098|W-2$)/.test(formType);
+
+    // Only apply positional if we have very few keyword matches
+    if (Object.keys(mappings).length < 3 && page1Fields.length > 0) {
+        if (isIndividualForm && !knownMap) {
+            // Standard individual: field 1 = name, field 2 = SSN, field 3 = address, field 4 = city/state/zip
+            if (page1Fields[0] && !mappings.full_name) {
+                mappings.full_name = page1Fields[0].fullName;
+            }
+            if (page1Fields[1] && !mappings.ssn) {
+                mappings.ssn = page1Fields[1].fullName;
+            }
+            if (page1Fields.length > 2 && !mappings.address) {
+                mappings.address = page1Fields[2].fullName;
+            }
+            if (page1Fields.length > 3 && !mappings.city_state_zip) {
+                mappings.city_state_zip = page1Fields[3].fullName;
+            }
+        } else if (isBusinessForm && !knownMap) {
+            if (page1Fields[0] && !mappings.business_name) {
+                mappings.business_name = page1Fields[0].fullName;
+            }
+            if (page1Fields[1] && !mappings.ein) {
+                mappings.ein = page1Fields[1].fullName;
+            }
+            if (page1Fields.length > 2 && !mappings.address) {
+                mappings.address = page1Fields[2].fullName;
+            }
+            if (page1Fields.length > 3 && !mappings.city_state_zip) {
+                mappings.city_state_zip = page1Fields[3].fullName;
+            }
+        } else if (isInfoReturn && !knownMap) {
+            // 1099/1098/W-2: first = payer name, second = payer EIN
+            if (page1Fields[0] && !mappings.payer_name) {
+                mappings.payer_name = page1Fields[0].fullName;
+            }
+            if (page1Fields[1] && !mappings.payer_ein) {
+                mappings.payer_ein = page1Fields[1].fullName;
+            }
+        }
+    }
+
+    // Page 2 repeat (name + SSN at top of page 2 is very common)
+    if (page2Fields.length >= 2) {
         if (!mappings.full_name_p2) {
-            mappings.full_name_p2 = page2TextFields[0].fullName;
+            mappings.full_name_p2 = page2Fields[0].fullName;
         }
         if (!mappings.ssn_p2) {
-            mappings.ssn_p2 = page2TextFields[1].fullName;
+            mappings.ssn_p2 = page2Fields[1].fullName;
         }
     }
 
     return mappings;
 }
 
-function hasMapping(mappings, key) {
-    return mappings[key] !== undefined;
-}
-
 // ==================== MAIN ====================
 async function main() {
-    console.log('=== IRS Form Batch Setup ===\n');
+    console.log('=== IRS Form Batch Setup v2 — Improved Field Mapping ===\n');
     
     const db = new Database(DB_PATH);
     const templates = db.prepare('SELECT * FROM templates ORDER BY id').all();
@@ -410,7 +545,6 @@ async function main() {
                 process.stdout.write(`[DL] ${formType}... `);
                 await downloadFile(irsUrl, fullPdfPath);
                 
-                // Update DB with file path
                 db.prepare('UPDATE templates SET file_path = ?, upload_date = CURRENT_TIMESTAMP WHERE id = ?')
                     .run(relativePath, template.id);
                 pdfPath = relativePath;
@@ -441,19 +575,24 @@ async function main() {
             const textFieldCount = fieldInfos.filter(f => f.type === 'PDFTextField').length;
             const checkBoxCount = fieldInfos.filter(f => f.type === 'PDFCheckBox').length;
             
-            // Auto-generate mappings
-            const autoMappings = autoMapFields(formType, fieldInfos);
+            // Auto-generate NEW mappings (complete replacement)
+            const newMappings = autoMapFields(formType, fieldInfos);
             
-            // Merge with existing mappings (don't overwrite manual ones)
-            const existingMappings = JSON.parse(template.field_mappings || '{}');
-            const mergedMappings = { ...autoMappings, ...existingMappings };
+            // Count how many mappings actually point to real PDF fields
+            const realMappings = Object.entries(newMappings).filter(([k, v]) => v && v !== '' && v !== k);
             
-            // Save to DB
+            // Save to DB (REPLACE old mappings entirely)
             db.prepare('UPDATE templates SET field_mappings = ? WHERE id = ?')
-                .run(JSON.stringify(mergedMappings), template.id);
+                .run(JSON.stringify(newMappings), template.id);
             
-            const mapCount = Object.keys(mergedMappings).length;
-            console.log(`  → ${fields.length} fields (${textFieldCount} text, ${checkBoxCount} check) → ${mapCount} mappings`);
+            console.log(`  → ${fields.length} fields (${textFieldCount} text, ${checkBoxCount} check) → ${realMappings.length} real mappings`);
+            
+            // Show the mappings
+            for (const [dataKey, pdfField] of Object.entries(newMappings)) {
+                const shortField = pdfField.replace(/^.*\./, '');
+                console.log(`    ${dataKey} → ${shortField}`);
+            }
+            
             mapped++;
             
         } catch (err) {

@@ -202,32 +202,40 @@ router.post('/', async (req, res) => {
 // Tries to match IRS PDF field names (often cryptic like "f1_01", "topmostSubform[0].Page1[0].f1_1[0]")
 // to our human-readable data keys (like "first_name", "ssn", "address")
 function heuristicMatchField(pdfFieldName, formData) {
-    const lower = pdfFieldName.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+    // CRITICAL: Split CamelCase BEFORE lowercasing so "TaxpayerAddress" → "Taxpayer Address"
+    const lower = pdfFieldName
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, ' ');
     
     // Keyword patterns — ordered by specificity
     const patterns = [
         // Name fields
         { match: (s) => /first.?name|fname|given.?name/.test(s), key: 'first_name' },
         { match: (s) => /last.?name|lname|surname|family.?name/.test(s), key: 'last_name' },
-        { match: (s) => /full.?name|your.?name|taxpayer.?name|name.*line/.test(s), key: null, combine: ['first_name', 'last_name'] },
+        { match: (s) => /full.?name|your.?name|taxpayer.?name|name.*shown|name.*return|name.*line|print.?name/.test(s), key: null, combine: ['first_name', 'last_name'] },
         // Business
-        { match: (s) => /business.?name|company|entity|dba|trade/.test(s), key: 'business_name' },
-        // Tax IDs
-        { match: (s) => /social.?security|ssn|soc.*sec/.test(s), key: 'ssn' },
-        { match: (s) => /employer.*id|ein(?![a-z])/.test(s), key: 'ein' },
-        // Address
-        { match: (s) => /street|address.*1|mailing|address.*line/.test(s), key: 'address' },
-        { match: (s) => /\bcity\b/.test(s), key: 'city' },
-        { match: (s) => /\bstate\b/.test(s), key: 'state' },
-        { match: (s) => /\bzip\b|postal/.test(s), key: 'zip' },
+        { match: (s) => /business.?name|company.?name|entity.?name|dba|trade.?name|organization.?name|corporation/.test(s), key: 'business_name' },
+        // Tax IDs — very specific patterns first
+        { match: (s) => /social.?security|ssn|soc.*sec|taxpayer.*id.*ssn/.test(s), key: 'ssn' },
+        { match: (s) => /employer.*id.*number|ein(?![a-z])|taxpayer.*id.*ein/.test(s), key: 'ein' },
+        { match: (s) => /identifying.?number|ident.*no/.test(s), key: 'ssn' },
+        // Address — broader matching (excludes payer/employer/representative addresses)
+        { match: (s) => /city.*state.*zip/.test(s), key: 'city_state_zip' },
+        { match: (s) => (/(street|mailing|home|taxpayer|your)\s*(address|addr)/.test(s) || /address\s*(line|street|number)/.test(s)) && !/email|web|url/.test(s), key: 'address' },
+        { match: (s) => /\baddress\b/.test(s) && !/payer|employer|represent|firm|email|web|url|filer/.test(s), key: 'address' },
+        { match: (s) => /\bcity\b/.test(s) && !/payer|employer/.test(s), key: 'city' },
+        { match: (s) => /\bstate\b/.test(s) && !/united|payer|employer/.test(s), key: 'state' },
+        { match: (s) => /\bzip\b|postal/.test(s) && !/payer|employer/.test(s), key: 'zip' },
         // Contact
-        { match: (s) => /phone|telephone|daytime/.test(s), key: 'phone' },
+        { match: (s) => /\bphone\b|\btelephone\b|daytime.*number/.test(s) && !/fax|payer|employer|represent/.test(s), key: 'phone' },
         { match: (s) => /email|e.?mail/.test(s), key: 'email' },
         // Filing
         { match: (s) => /filing.?status/.test(s), key: 'filing_status' },
         { match: (s) => /date.*birth|dob|birth.*date/.test(s), key: 'date_of_birth' },
         // W-9 specific
-        { match: (s) => /tax.?class|federal.?tax/.test(s), key: 'federal_tax_classification' },
+        { match: (s) => /tax.?class|federal.?tax.?class/.test(s), key: 'federal_tax_classification' },
         { match: (s) => /exempt.*payee/.test(s), key: 'exempt_payee_code' },
         { match: (s) => /fatca/.test(s), key: 'exemption_fatca_code' },
         { match: (s) => /account.?num/.test(s), key: 'account_numbers' },
@@ -236,15 +244,22 @@ function heuristicMatchField(pdfFieldName, formData) {
         { match: (s) => /federal.*tax.*with|fed.*withh/.test(s), key: 'federal_tax_withheld' },
         { match: (s) => /employer.*name/.test(s), key: 'employer_name' },
         { match: (s) => /payer.*name/.test(s), key: 'payer_name' },
+        { match: (s) => /payer.*address|payer.*street/.test(s), key: 'payer_address' },
         // Engagement letter fields
         { match: (s) => /client.?name/.test(s), key: 'client_name' },
         { match: (s) => /services|scope/.test(s), key: 'services_description' },
         { match: (s) => /fee|payment/.test(s), key: 'fee_arrangement' },
-        // Power of Attorney / 8821
-        { match: (s) => /representative|designee/.test(s), key: 'representative_name' },
+        // Power of Attorney / 2848 / 8821
+        { match: (s) => /representative.*name|designee.*name/.test(s), key: 'representative_name' },
+        { match: (s) => /representative.*address/.test(s), key: 'representative_address' },
+        { match: (s) => /representative.*phone|representative.*tel/.test(s), key: 'representative_phone' },
+        { match: (s) => /representative.*fax/.test(s), key: 'representative_fax' },
+        { match: (s) => /\bcaf\b.*number/.test(s), key: 'caf_number' },
+        { match: (s) => /\bptin\b/.test(s), key: 'ptin' },
         { match: (s) => /tax.?matters/.test(s), key: 'tax_matters' },
         { match: (s) => /tax.?form/.test(s), key: 'tax_form_number' },
         { match: (s) => /tax.?year|year.*period/.test(s), key: 'tax_years' },
+        { match: (s) => /plan.?number/.test(s), key: 'plan_number' },
     ];
 
     for (const pattern of patterns) {
