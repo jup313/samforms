@@ -237,12 +237,19 @@ function heuristicMatchField(pdfFieldName, formData) {
 // Format: { form_type: { pdf_field_name: our_data_key } }
 const KNOWN_IRS_FIELD_MAPS = {
     'W-9': {
-        'f1_1': 'full_name',      // Name
-        'f1_2': 'business_name',   // Business name
-        'f1_9': 'address',         // Address
-        'f1_10': 'city_state_zip', // City, state, zip
-        'f1_11': 'account_numbers',
-        'f1_12': 'requester_name',
+        'f1_01': 'full_name',           // Line 1: Name
+        'f1_02': 'business_name',       // Line 2: Business name / disregarded entity
+        'f1_05': 'exempt_payee_code',   // Exemptions: payee code
+        'f1_06': 'exemption_fatca_code',// Exemptions: FATCA code
+        'f1_07': 'address',             // Line 5: Address (street, apt)
+        'f1_08': 'city_state_zip',      // Line 6: City, state, ZIP
+        'f1_09': 'requester_name',      // Requester's name
+        'f1_10': 'account_numbers',     // Account number(s)
+        'f1_11': 'ssn_1',              // SSN first 3 digits
+        'f1_12': 'ssn_2',              // SSN middle 2 digits
+        'f1_13': 'ssn_3',              // SSN last 4 digits
+        'f1_14': 'ein_1',             // EIN first 2 digits
+        'f1_15': 'ein_2',             // EIN last 7 digits
     },
     'W-4': {
         'f1_01': 'first_name',
@@ -262,6 +269,28 @@ function buildCompositeValue(key, formData) {
     if (key === 'city_state_zip') {
         const parts = [formData.city, formData.state, formData.zip].filter(Boolean);
         return parts.length > 0 ? parts.join(', ') : null;
+    }
+    // SSN split into 3 parts (xxx-xx-xxxx)
+    if (key === 'ssn_1' && formData.ssn) {
+        const digits = formData.ssn.replace(/\D/g, '');
+        return digits.substring(0, 3) || null;
+    }
+    if (key === 'ssn_2' && formData.ssn) {
+        const digits = formData.ssn.replace(/\D/g, '');
+        return digits.substring(3, 5) || null;
+    }
+    if (key === 'ssn_3' && formData.ssn) {
+        const digits = formData.ssn.replace(/\D/g, '');
+        return digits.substring(5, 9) || null;
+    }
+    // EIN split into 2 parts (xx-xxxxxxx)
+    if (key === 'ein_1' && formData.ein) {
+        const digits = formData.ein.replace(/\D/g, '');
+        return digits.substring(0, 2) || null;
+    }
+    if (key === 'ein_2' && formData.ein) {
+        const digits = formData.ein.replace(/\D/g, '');
+        return digits.substring(2, 9) || null;
     }
     return formData[key] || null;
 }
