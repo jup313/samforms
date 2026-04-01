@@ -6,3 +6,4 @@ pdf-templates/archive/
 .DS_Store
 ._*
 /tmp/
+generated/

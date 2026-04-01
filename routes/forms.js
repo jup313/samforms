@@ -364,12 +364,25 @@ async function generateFilledPDF(rootDir, template, formData, submissionId) {
         const pdfFieldToValue = {};
         
         for (const [dataKey, pdfFieldName] of Object.entries(fieldMappings)) {
-            const val = formData[dataKey];
-            if (val && val !== '') {
-                // If mapping value differs from key, it's a real PDF field mapping
-                if (pdfFieldName && pdfFieldName !== '' && pdfFieldName !== dataKey) {
-                    pdfFieldToValue[pdfFieldName] = val;
+            if (!pdfFieldName || pdfFieldName === '' || pdfFieldName === dataKey) continue;
+            
+            // First try direct form data lookup
+            let val = formData[dataKey];
+            
+            // If no direct match, try building composite value (full_name, city_state_zip, ssn_p2, etc.)
+            if (!val || val === '') {
+                val = buildCompositeValue(dataKey, formData);
+            }
+            // Handle page 2 repeats: full_name_p2 -> full_name, ssn_p2 -> ssn
+            if (!val || val === '') {
+                const baseKey = dataKey.replace(/_p\d+$/, '');
+                if (baseKey !== dataKey) {
+                    val = formData[baseKey] || buildCompositeValue(baseKey, formData);
                 }
+            }
+            
+            if (val && val !== '') {
+                pdfFieldToValue[pdfFieldName] = val;
             }
         }
 
