@@ -282,6 +282,20 @@ function heuristicMatchField(pdfFieldName, formData) {
 // Hard-coded mappings for common IRS forms where PDF field names are cryptic
 // Format: { form_type: { pdf_field_name: our_data_key } }
 const KNOWN_IRS_FIELD_MAPS = {
+    '8821': {
+        'f1_6': 'full_name',         // Taxpayer name and address
+        'f1_7': 'ssn',               // Taxpayer identification number(s)
+        'f1_8': 'phone',             // Daytime telephone number
+        'f1_9': 'plan_number',       // Plan number (if applicable)
+        'f1_10': 'designee_name',    // Designee name and address
+        'f1_11': 'caf_number',       // CAF No.
+        'f1_12': 'ptin',             // PTIN
+        'f1_13': 'designee_phone',   // Telephone No.
+        'f1_14': 'designee_fax',     // Fax No.
+        'f1_20': 'tax_matters',      // (a) Type of Tax Information
+        'f1_21': 'tax_form_number',  // (b) Tax Form Number
+        'f1_22': 'tax_years',        // (c) Year(s) or Period(s)
+    },
     'W-9': {
         'f1_01': 'full_name',           // Line 1: Name
         'f1_02': 'business_name',       // Line 2: Business name / disregarded entity

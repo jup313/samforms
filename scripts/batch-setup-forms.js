@@ -349,19 +349,22 @@ const KNOWN_POSITIONAL_MAPS = {
         'f2_2': 'ssn',
     },
     '8821': {
-        'f1_1': 'full_name',
-        'f1_2': 'ssn',
-        'f1_3': 'address',
-        'f1_4': 'city_state_zip',
-        'f1_5': 'phone',
-        'f1_6': 'designee_name',
-        'f1_7': 'designee_phone',
-        'f1_8': 'designee_fax',
-        'f1_9': 'caf_number',
-        // Line 3 table rows
-        'f1_20': 'tax_matters',
-        'f1_21': 'tax_form_number',
-        'f1_22': 'tax_years',
+        // f1_1 to f1_5 are "For IRS Use Only" (Pg1Header) — do NOT map
+        // Line 1: Taxpayer Information
+        'f1_6': 'full_name',         // Taxpayer name and address
+        'f1_7': 'ssn',               // Taxpayer identification number(s)
+        'f1_8': 'phone',             // Daytime telephone number
+        'f1_9': 'plan_number',       // Plan number (if applicable)
+        // Line 2: Designee(s) — 1st designee
+        'f1_10': 'designee_name',    // Name and address
+        'f1_11': 'caf_number',       // CAF No.
+        'f1_12': 'ptin',             // PTIN
+        'f1_13': 'designee_phone',   // Telephone No.
+        'f1_14': 'designee_fax',     // Fax No.
+        // Line 3: Tax Information table (Row 1)
+        'f1_20': 'tax_matters',      // (a) Type of Tax Information
+        'f1_21': 'tax_form_number',  // (b) Tax Form Number
+        'f1_22': 'tax_years',        // (c) Year(s) or Period(s)
     },
     '4506-T': {
         'f1_1': 'full_name',
