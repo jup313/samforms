@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
 // Get all form submissions
@@ -136,6 +138,27 @@ router.post('/', async (req, res) => {
         const submissionId = submission.lastInsertRowid;
         let pdfPath = null;
 
+        // Auto-download IRS PDF if template doesn't have one yet
+        if (generate_pdf && (!template.file_path || !fs.existsSync(path.join(req.app.locals.rootDir, template.file_path)))) {
+            const irsPdfUrls = req.app.locals.irsPdfUrls || {};
+            const irsUrl = irsPdfUrls[template.form_type];
+            if (irsUrl) {
+                try {
+                    console.log(`Auto-downloading IRS PDF for ${template.form_type}...`);
+                    const filename = `${template.form_type.replace(/[^a-zA-Z0-9-]/g, '_')}_IRS_${Date.now()}.pdf`;
+                    const filePath = path.join(req.app.locals.rootDir, 'pdf-templates', 'active', filename);
+                    const relativePath = path.join('pdf-templates', 'active', filename);
+                    await downloadFile(irsUrl, filePath);
+                    db.prepare('UPDATE templates SET file_path = ?, upload_date = CURRENT_TIMESTAMP WHERE id = ?')
+                        .run(relativePath, template.id);
+                    template.file_path = relativePath;
+                    console.log(`Auto-downloaded ${template.form_type} from IRS.gov`);
+                } catch (dlErr) {
+                    console.error(`Failed to auto-download ${template.form_type} from IRS:`, dlErr.message);
+                }
+            }
+        }
+
         // Generate PDF if requested and template has a PDF
         if (generate_pdf && template.file_path && fs.existsSync(path.join(req.app.locals.rootDir, template.file_path))) {
             try {
@@ -257,7 +280,35 @@ const KNOWN_IRS_FIELD_MAPS = {
         'f1_03': 'ssn',
         'f1_04': 'address',
         'f1_05': 'city_state_zip',
-    }
+    },
+    '8283': {
+        'f1_1': 'full_name',            // Name(s) shown on your tax return
+        'f1_2': 'ssn',                  // Identifying number
+        'f1_3': 'full_name',            // Donor name (if different)
+        'f1_4': 'ein',                  // Donor identifying number
+        // Section A, Line 1 Row A - first donated property
+        'f1_5': 'donation_description',  // (a) Description of donated property
+        'f1_6': 'donation_date',         // (b) Date of the contribution - physical condition
+        'f1_7': 'donation_date',         // (b) Date of the contribution
+        // Section A, Line 1 Row A - columns D-I
+        'f1_17': 'date_acquired',        // (d) Date acquired by donor
+        'f1_18': 'how_acquired',         // (e) How acquired by donor
+        'f1_19': 'donor_cost',           // (f) Donor's cost or adjusted basis
+        'f1_20': 'fair_market_value',    // (g) Fair market value
+        'f1_21': 'fmv_method',           // (h) Method used to determine FMV
+        // Section A, Line 3 Row A - donee info
+        'f1_42': 'donee_name',           // Name of charitable organization (donee)
+        'f1_43': 'donee_address',        // Address of donee
+        'f1_44': 'donee_city_state_zip', // City, state, ZIP of donee
+        // Page 2 - Section B
+        'f2_1': 'full_name',             // Name(s) on return
+        'f2_2': 'ssn',                   // Identifying number
+        'f2_3': 'property_description',  // Description of donated property
+        'f2_4': 'appraised_fmv',         // Appraised fair market value
+        'f2_5': 'date_acquired',         // Date acquired
+        'f2_6': 'date_donated',          // Date donated
+        'f2_7': 'donor_cost',            // Donor's cost or basis
+    },
 };
 
 // Build composite values from form data
@@ -378,7 +429,15 @@ async function generateFilledPDF(rootDir, template, formData, submissionId) {
             if (value !== null && value !== undefined && value !== '') {
                 try {
                     if (fieldType === 'PDFTextField') {
-                        field.setText(String(value));
+                        let textVal = String(value);
+                        // Respect maxLength if set on the field
+                        try {
+                            const maxLen = field.getMaxLength();
+                            if (maxLen && maxLen > 0 && textVal.length > maxLen) {
+                                textVal = textVal.substring(0, maxLen);
+                            }
+                        } catch(ml) { /* no maxLength set */ }
+                        field.setText(textVal);
                         filledCount++;
                         filledFields.push(fieldName);
                     } else if (fieldType === 'PDFCheckBox') {
@@ -459,7 +518,7 @@ async function appendDataSummaryPage(pdfDoc, template, formData, submissionId, f
         });
         y -= 12;
         if (filledCount === 0) {
-            page.drawText(`⚠ No fields matched — use Template > Map Fields to configure field mappings`, {
+            page.drawText(`WARNING: No fields matched - use Template > Map Fields to configure field mappings`, {
                 x: margin, y, size: 9, font: boldFont, color: rgb(0.8, 0.2, 0)
             });
             y -= 12;
@@ -576,6 +635,42 @@ async function generateSimplePDF(rootDir, template, formData, submissionId) {
     fs.writeFileSync(path.join(rootDir, outputPath), pdfBytes);
 
     return outputPath;
+}
+
+// ==================== DOWNLOAD FILE HELPER ====================
+function downloadFile(url, destPath) {
+    return new Promise((resolve, reject) => {
+        const makeRequest = (requestUrl, redirectCount = 0) => {
+            if (redirectCount > 5) return reject(new Error('Too many redirects'));
+            const protocol = requestUrl.startsWith('https') ? https : http;
+            protocol.get(requestUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IRS-Forms-Manager/1.0)' }
+            }, (response) => {
+                if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                    return makeRequest(response.headers.location, redirectCount + 1);
+                }
+                if (response.statusCode !== 200) {
+                    return reject(new Error(`HTTP ${response.statusCode}: Failed to download`));
+                }
+                const fileStream = fs.createWriteStream(destPath);
+                response.pipe(fileStream);
+                fileStream.on('finish', () => {
+                    fileStream.close();
+                    const header = Buffer.alloc(5);
+                    const fd = fs.openSync(destPath, 'r');
+                    fs.readSync(fd, header, 0, 5, 0);
+                    fs.closeSync(fd);
+                    if (header.toString() !== '%PDF-') {
+                        fs.unlinkSync(destPath);
+                        return reject(new Error('Downloaded file is not a valid PDF'));
+                    }
+                    resolve();
+                });
+                fileStream.on('error', (err) => { fs.unlink(destPath, () => {}); reject(err); });
+            }).on('error', reject);
+        };
+        makeRequest(url);
+    });
 }
 
 // Delete submission
