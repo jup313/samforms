@@ -27,7 +27,8 @@ const correctMappings = {
     'tax_years': 'topmostSubform[0].Page1[0].Table_Line3[0].BodyRow1[0].Years1[0]',
     'specific_acts': 'topmostSubform[0].Page1[0].AdditionalActs1[0]',
     'specific_deletions': 'topmostSubform[0].Page2[0].SpecificDeletions1[0]',
-    // PrintName and PrintNameTaxpayer intentionally NOT mapped — signature area, taxpayer fills manually
+    'full_name_p2': 'topmostSubform[0].Page2[0].PrintName[0]',
+    'business_name_p2': 'topmostSubform[0].Page2[0].PrintNameTaxpayer[0]',
     'representative_designation': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Designation1[0]',
     'representative_jurisdiction': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Jurisdiction1[0]',
     'representative_bar_number': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Bar1[0]'

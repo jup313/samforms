@@ -205,7 +205,7 @@ router.post('/', async (req, res) => {
 function heuristicMatchField(pdfFieldName, formData) {
     // ---- Skip fields that should NEVER be auto-filled (signature areas) ----
     const shortForSkip = pdfFieldName.replace(/^.*\./, '').replace(/\[\d+\]$/g, '').toLowerCase();
-    const neverFillFields = ['printname', 'printnametaxpayer', 'title', 'signature', 'date'];
+    const neverFillFields = ['title', 'signature', 'date'];
     if (neverFillFields.includes(shortForSkip)) return null;
 
     // ---- Skip numbered duplicate slots (2+) ----
@@ -328,8 +328,9 @@ const KNOWN_IRS_FIELD_MAPS = {
         'Description1': 'tax_matters',
         'TaxForm1': 'tax_form_number',
         'Years1': 'tax_years',
-        // Page 2 — Signature area (leave blank - taxpayer fills in when signing)
-        // 'PrintName' and 'PrintNameTaxpayer' intentionally NOT mapped
+        // Page 2 — Signature area
+        'PrintName': 'full_name',                // Print name (taxpayer signing)
+        'PrintNameTaxpayer': 'business_name',     // Print name of taxpayer from line 1 if other than individual
         // Page 2 — Part II Declaration row 1 ONLY
         'Designation1': 'representative_designation',
         'Jurisdiction1': 'representative_jurisdiction',
