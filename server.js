@@ -45,6 +45,7 @@ app.locals.rootDir = __dirname;
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/forms', require('./routes/forms'));
+app.use('/api/firm-profile', require('./routes/firm-profile'));
 
 // Serve main page
 app.get('/', (req, res) => {

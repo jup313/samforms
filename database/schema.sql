@@ -46,6 +46,36 @@ CREATE TABLE IF NOT EXISTS form_submissions (
     FOREIGN KEY (template_id) REFERENCES templates(id)
 );
 
+-- Firm profile — single-row table storing the tax preparer/representative defaults
+CREATE TABLE IF NOT EXISTS firm_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    firm_name TEXT,
+    firm_address TEXT,
+    firm_city TEXT,
+    firm_state TEXT,
+    firm_zip TEXT,
+    firm_phone TEXT,
+    firm_fax TEXT,
+    firm_email TEXT,
+    firm_ein TEXT,
+    firm_ptin TEXT,
+    preparer_name TEXT,
+    preparer_title TEXT,
+    representative_name TEXT,
+    representative_address TEXT,
+    representative_phone TEXT,
+    representative_fax TEXT,
+    representative_ptin TEXT,
+    representative_designation TEXT,
+    representative_jurisdiction TEXT,
+    representative_bar_number TEXT,
+    caf_number TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed a single row so UPDATE always works
+INSERT OR IGNORE INTO firm_profile (id) VALUES (1);
+
 -- Index for fast customer lookup
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(last_name, first_name);
 CREATE INDEX IF NOT EXISTS idx_templates_active ON templates(form_type, active);

@@ -68,6 +68,43 @@ router.post('/', async (req, res) => {
         const { template_id, customer_id, form_data, save_customer, generate_pdf, tax_year } = req.body;
         const selectedTaxYear = tax_year || new Date().getFullYear().toString();
 
+        // Auto-merge firm profile defaults into form_data (only for empty fields)
+        try {
+            const firmProfile = db.prepare('SELECT * FROM firm_profile WHERE id = 1').get();
+            if (firmProfile) {
+                // Map firm_profile columns → form_data keys
+                const firmToFormMap = {
+                    representative_name: 'representative_name',
+                    representative_address: 'representative_address',
+                    representative_phone: 'representative_phone',
+                    representative_fax: 'representative_fax',
+                    representative_ptin: 'representative_ptin',
+                    representative_designation: 'representative_designation',
+                    representative_jurisdiction: 'representative_jurisdiction',
+                    representative_bar_number: 'representative_bar_number',
+                    caf_number: 'caf_number',
+                    firm_name: 'firm_name',
+                    firm_address: 'firm_address',
+                    firm_phone: 'firm_phone',
+                    firm_ein: 'firm_ein',
+                    firm_ptin: 'firm_ptin',
+                    preparer_name: 'preparer_name',
+                    preparer_title: 'preparer_title',
+                };
+                for (const [profileCol, formKey] of Object.entries(firmToFormMap)) {
+                    if (firmProfile[profileCol] && (!form_data[formKey] || form_data[formKey] === '')) {
+                        form_data[formKey] = firmProfile[profileCol];
+                    }
+                }
+                // Also set ptin from rep ptin if ptin field is empty
+                if (firmProfile.representative_ptin && (!form_data.ptin || form_data.ptin === '')) {
+                    form_data.ptin = firmProfile.representative_ptin;
+                }
+            }
+        } catch (fpErr) {
+            console.warn('Could not load firm profile:', fpErr.message);
+        }
+
         // Get template
         const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(template_id);
         if (!template) return res.status(404).json({ error: 'Template not found' });

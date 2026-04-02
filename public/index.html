@@ -25,6 +25,9 @@
                 <span class="nav-icon">📝</span> Fill Out Forms
             </a>
             <div class="nav-section">Management</div>
+            <a class="nav-item" data-page="firm-profile" onclick="navigateTo('firm-profile')">
+                <span class="nav-icon">🏢</span> Firm Profile
+            </a>
             <a class="nav-item" data-page="customers" onclick="navigateTo('customers')">
                 <span class="nav-icon">👥</span> Customers
             </a>
@@ -223,6 +226,160 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- ==================== FIRM PROFILE ==================== -->
+        <section id="page-firm-profile" class="page-section">
+            <div class="top-bar">
+                <div>
+                    <h2>🏢 Firm Profile</h2>
+                    <span class="breadcrumb">Manage your firm &amp; representative information — auto-filled on every form</span>
+                </div>
+            </div>
+
+            <div class="alert alert-info">
+                💡 This information is automatically injected into every form you generate. Fill it once and it will be used as default values for representative, preparer, and firm fields on all IRS forms.
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <!-- Firm Information -->
+                <div class="card">
+                    <div class="card-header"><h3>🏢 Firm Information</h3></div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>Firm Name</label>
+                            <input type="text" class="form-control" id="fpFirmName" placeholder="ABC Tax Services LLC">
+                        </div>
+                        <div class="form-group">
+                            <label>Firm Address</label>
+                            <input type="text" class="form-control" id="fpFirmAddress" placeholder="123 Main St">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>City</label>
+                                <input type="text" class="form-control" id="fpFirmCity">
+                            </div>
+                            <div class="form-group">
+                                <label>State</label>
+                                <input type="text" class="form-control" id="fpFirmState" maxlength="2" placeholder="NY">
+                            </div>
+                            <div class="form-group">
+                                <label>ZIP</label>
+                                <input type="text" class="form-control" id="fpFirmZip" placeholder="10001">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="text" class="form-control" id="fpFirmPhone" placeholder="(555) 123-4567">
+                            </div>
+                            <div class="form-group">
+                                <label>Fax</label>
+                                <input type="text" class="form-control" id="fpFirmFax" placeholder="(555) 123-4568">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Email</label>
+                                <input type="email" class="form-control" id="fpFirmEmail" placeholder="info@firm.com">
+                            </div>
+                            <div class="form-group">
+                                <label>Firm EIN</label>
+                                <input type="text" class="form-control" id="fpFirmEin" placeholder="XX-XXXXXXX">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Firm PTIN</label>
+                            <input type="text" class="form-control" id="fpFirmPtin" placeholder="PXXXXXXXX">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Representative / POA Information -->
+                <div class="card">
+                    <div class="card-header"><h3>👤 Representative / POA Information</h3></div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>Representative Name</label>
+                            <input type="text" class="form-control" id="fpRepName" placeholder="John A. Smith">
+                        </div>
+                        <div class="form-group">
+                            <label>Representative Address</label>
+                            <input type="text" class="form-control" id="fpRepAddress" placeholder="123 Main St, Suite 200">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="text" class="form-control" id="fpRepPhone" placeholder="(555) 123-4567">
+                            </div>
+                            <div class="form-group">
+                                <label>Fax</label>
+                                <input type="text" class="form-control" id="fpRepFax" placeholder="(555) 123-4568">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>PTIN</label>
+                            <input type="text" class="form-control" id="fpRepPtin" placeholder="PXXXXXXXX">
+                        </div>
+                        <div class="form-group">
+                            <label>CAF Number</label>
+                            <input type="text" class="form-control" id="fpCafNumber" placeholder="XXXXXXXXX">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Designation</label>
+                                <select class="form-control" id="fpRepDesignation">
+                                    <option value="">Select...</option>
+                                    <option value="Attorney">Attorney</option>
+                                    <option value="CPA">Certified Public Accountant (CPA)</option>
+                                    <option value="Enrolled Agent">Enrolled Agent</option>
+                                    <option value="Officer">Officer</option>
+                                    <option value="Full-Time Employee">Full-Time Employee</option>
+                                    <option value="Family Member">Family Member</option>
+                                    <option value="Enrolled Actuary">Enrolled Actuary</option>
+                                    <option value="Unenrolled Return Preparer">Unenrolled Return Preparer</option>
+                                    <option value="Student Attorney">Student Attorney or CPA</option>
+                                    <option value="Registered Tax Return Preparer">Registered Tax Return Preparer</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Jurisdiction (State/Bar)</label>
+                                <input type="text" class="form-control" id="fpRepJurisdiction" placeholder="e.g., New York">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Bar / License Number</label>
+                            <input type="text" class="form-control" id="fpRepBarNumber" placeholder="Bar #12345">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preparer Info -->
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-header"><h3>✍️ Preparer Information</h3></div>
+                <div class="card-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Preparer Name</label>
+                            <input type="text" class="form-control" id="fpPreparerName" placeholder="Jane B. Doe">
+                        </div>
+                        <div class="form-group">
+                            <label>Preparer Title</label>
+                            <input type="text" class="form-control" id="fpPreparerTitle" placeholder="Tax Preparer">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <button class="btn btn-primary btn-lg" onclick="saveFirmProfile()">
+                    💾 Save Firm Profile
+                </button>
+                <button class="btn btn-outline btn-lg" onclick="loadFirmProfile()">
+                    🔄 Reset / Reload
+                </button>
             </div>
         </section>
 

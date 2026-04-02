@@ -19,6 +19,7 @@ function navigateTo(page) {
     switch (page) {
         case 'dashboard': loadDashboard(); break;
         case 'forms': loadFormTemplates(); break;
+        case 'firm-profile': loadFirmProfile(); break;
         case 'customers': loadCustomers(); break;
         case 'templates': loadTemplates(); break;
         case 'history': loadHistory(); break;
@@ -1069,6 +1070,68 @@ async function saveFieldMappings() {
         closeModal('fieldMapModal');
     } catch (err) {
         showToast('Error saving mappings: ' + err.message, 'error');
+    }
+}
+
+// ==================== FIRM PROFILE ====================
+// Map of HTML element IDs to database column names
+const FIRM_PROFILE_FIELDS = {
+    fpFirmName:        'firm_name',
+    fpFirmAddress:     'firm_address',
+    fpFirmCity:        'firm_city',
+    fpFirmState:       'firm_state',
+    fpFirmZip:         'firm_zip',
+    fpFirmPhone:       'firm_phone',
+    fpFirmFax:         'firm_fax',
+    fpFirmEmail:       'firm_email',
+    fpFirmEin:         'firm_ein',
+    fpFirmPtin:        'firm_ptin',
+    fpRepName:         'representative_name',
+    fpRepAddress:      'representative_address',
+    fpRepPhone:        'representative_phone',
+    fpRepFax:          'representative_fax',
+    fpRepPtin:         'representative_ptin',
+    fpCafNumber:       'caf_number',
+    fpRepDesignation:  'representative_designation',
+    fpRepJurisdiction: 'representative_jurisdiction',
+    fpRepBarNumber:    'representative_bar_number',
+    fpPreparerName:    'preparer_name',
+    fpPreparerTitle:   'preparer_title',
+};
+
+async function loadFirmProfile() {
+    try {
+        const profile = await api('/api/firm-profile');
+        // Populate all form fields from profile data
+        for (const [elementId, dbColumn] of Object.entries(FIRM_PROFILE_FIELDS)) {
+            const el = document.getElementById(elementId);
+            if (el) {
+                el.value = profile[dbColumn] || '';
+            }
+        }
+        showToast('Firm profile loaded', 'info');
+    } catch (err) {
+        showToast('Error loading firm profile: ' + err.message, 'error');
+    }
+}
+
+async function saveFirmProfile() {
+    const data = {};
+    for (const [elementId, dbColumn] of Object.entries(FIRM_PROFILE_FIELDS)) {
+        const el = document.getElementById(elementId);
+        if (el) {
+            data[dbColumn] = el.value.trim() || null;
+        }
+    }
+
+    try {
+        await api('/api/firm-profile', {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        showToast('Firm profile saved successfully!', 'success');
+    } catch (err) {
+        showToast('Error saving firm profile: ' + err.message, 'error');
     }
 }
 
