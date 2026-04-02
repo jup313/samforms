@@ -5,6 +5,7 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const pdftk = require('../utils/pdftk');
 
 // Get all form submissions
 router.get('/', (req, res) => {
@@ -440,9 +441,87 @@ function buildCompositeValue(key, formData) {
     return formData[key] || null;
 }
 
+// ==================== BUILD FIELD VALUES MAP ====================
+// Resolves form data keys to full PDF field names using DB mappings + known maps + heuristics
+function buildFieldValuesMap(template, formData, pdfFields) {
+    const fieldMappings = JSON.parse(template.field_mappings || '{}');
+    const knownMap = KNOWN_IRS_FIELD_MAPS[template.form_type] || {};
+    const pdfFieldToValue = {};
+
+    // Priority 1: Explicit DB field_mappings (our_data_key → pdf_field_name)
+    for (const [dataKey, pdfFieldName] of Object.entries(fieldMappings)) {
+        if (!pdfFieldName || pdfFieldName === '' || pdfFieldName === dataKey) continue;
+        let val = formData[dataKey];
+        if (!val || val === '') val = buildCompositeValue(dataKey, formData);
+        if (!val || val === '') {
+            const baseKey = dataKey.replace(/_p\d+$/, '');
+            if (baseKey !== dataKey) val = formData[baseKey] || buildCompositeValue(baseKey, formData);
+        }
+        if (val && val !== '') pdfFieldToValue[pdfFieldName] = val;
+    }
+
+    // Priority 2: Known IRS field maps (short_name → data_key, resolved to full field name)
+    for (const [shortField, dataKey] of Object.entries(knownMap)) {
+        // Find the full field name that matches this short name
+        const fullName = pdfFields
+            ? pdfFields.find(f => f.shortName === shortField)?.fullName
+            : null;
+        const targetName = fullName || shortField;
+        if (!pdfFieldToValue[targetName]) {
+            const val = buildCompositeValue(dataKey, formData);
+            if (val) pdfFieldToValue[targetName] = val;
+        }
+    }
+
+    // Priority 3: Heuristic matching for remaining unfilled fields
+    if (pdfFields) {
+        for (const field of pdfFields) {
+            if (field.type === 'Button') continue; // Skip checkboxes for heuristic
+            if (pdfFieldToValue[field.fullName]) continue; // Already mapped
+            const val = heuristicMatchField(field.fullName, formData);
+            if (val) pdfFieldToValue[field.fullName] = val;
+        }
+    }
+
+    return pdfFieldToValue;
+}
+
 // ==================== GENERATE FILLED PDF ====================
 async function generateFilledPDF(rootDir, template, formData, submissionId) {
     const templatePath = path.join(rootDir, template.file_path);
+    const outputFilename = `${template.form_type}_${submissionId}_${Date.now()}.pdf`;
+    const outputPath = path.join('generated', outputFilename);
+    const fullOutputPath = path.join(rootDir, outputPath);
+
+    // Try pdftk first (better XFA handling, no field stripping)
+    if (pdftk.isPdftkAvailable()) {
+        try {
+            const pdfFields = pdftk.scanFields(templatePath);
+            if (pdfFields && pdfFields.length > 0) {
+                const fieldValues = buildFieldValuesMap(template, formData, pdfFields);
+                const filledCount = Object.keys(fieldValues).length;
+
+                const success = pdftk.fillForm(templatePath, fieldValues, fullOutputPath, true);
+                if (success) {
+                    console.log(`PDF Fill (pdftk): ${template.form_type} — ${filledCount}/${pdfFields.length} fields filled`);
+
+                    // Append data summary page using pdf-lib on the pdftk output
+                    const filledBytes = fs.readFileSync(fullOutputPath);
+                    const pdfDoc = await PDFDocument.load(filledBytes, { ignoreEncryption: true });
+                    await appendDataSummaryPage(pdfDoc, template, formData, submissionId, filledCount, pdfFields.length);
+                    const finalBytes = await pdfDoc.save();
+                    fs.writeFileSync(fullOutputPath, finalBytes);
+
+                    return outputPath;
+                }
+            }
+        } catch (pdftkErr) {
+            console.warn('pdftk fill failed, falling back to pdf-lib:', pdftkErr.message);
+        }
+    }
+
+    // Fallback: pdf-lib based filling
+    console.log(`PDF Fill (pdf-lib fallback): ${template.form_type}`);
     const pdfBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     
@@ -450,113 +529,38 @@ async function generateFilledPDF(rootDir, template, formData, submissionId) {
     const fieldMappings = JSON.parse(template.field_mappings || '{}');
     const fields = form.getFields();
     let filledCount = 0;
-    const filledFields = [];
 
     if (fields.length > 0) {
-        // Build reverse map from field_mappings: pdf_field_name -> data_value
-        // fieldMappings format: { our_data_key: pdf_field_name }
-        const pdfFieldToValue = {};
-        
-        for (const [dataKey, pdfFieldName] of Object.entries(fieldMappings)) {
-            if (!pdfFieldName || pdfFieldName === '' || pdfFieldName === dataKey) continue;
-            
-            // First try direct form data lookup
-            let val = formData[dataKey];
-            
-            // If no direct match, try building composite value (full_name, city_state_zip, ssn_p2, etc.)
-            if (!val || val === '') {
-                val = buildCompositeValue(dataKey, formData);
-            }
-            // Handle page 2 repeats: full_name_p2 -> full_name, ssn_p2 -> ssn
-            if (!val || val === '') {
-                const baseKey = dataKey.replace(/_p\d+$/, '');
-                if (baseKey !== dataKey) {
-                    val = formData[baseKey] || buildCompositeValue(baseKey, formData);
-                }
-            }
-            
-            if (val && val !== '') {
-                pdfFieldToValue[pdfFieldName] = val;
-            }
-        }
-
-        // Also check known IRS field maps for this form type
         const knownMap = KNOWN_IRS_FIELD_MAPS[template.form_type] || {};
-        for (const [pdfField, dataKey] of Object.entries(knownMap)) {
-            if (!pdfFieldToValue[pdfField]) {
-                const val = buildCompositeValue(dataKey, formData);
-                if (val) pdfFieldToValue[pdfField] = val;
-            }
-        }
+        // Build pdf-lib field list for buildFieldValuesMap
+        const pdfFieldList = fields.map(f => ({
+            fullName: f.getName(),
+            shortName: f.getName().replace(/^.*\./, '').replace(/\[\d+\]$/g, ''),
+            type: f.constructor.name === 'PDFCheckBox' ? 'Button' : 'Text',
+        }));
+        const pdfFieldToValue = buildFieldValuesMap(template, formData, pdfFieldList);
 
-        // Now fill each PDF field
         for (const field of fields) {
             const fieldName = field.getName();
             const fieldType = field.constructor.name;
-            let value = null;
+            const value = pdfFieldToValue[fieldName];
 
-            // Priority 1: Explicit mapping from field_mappings
-            if (pdfFieldToValue[fieldName]) {
-                value = pdfFieldToValue[fieldName];
-            }
-
-            // Priority 2: Direct name match (our data key matches PDF field name exactly)
-            if (!value && formData[fieldName]) {
-                value = formData[fieldName];
-            }
-
-            // Priority 3: Partial/stripped name match
-            if (!value) {
-                const stripped = fieldName.replace(/^topmostSubform\[0\]\.Page\d+\[0\]\./, '')
-                                          .replace(/\[\d+\]$/g, '')
-                                          .replace(/\[\d+\]/g, '.')
-                                          .toLowerCase();
-                for (const [dataKey, dataVal] of Object.entries(formData)) {
-                    if (dataVal && stripped === dataKey.toLowerCase()) {
-                        value = dataVal;
-                        break;
-                    }
-                }
-            }
-
-            // Priority 4: Known IRS field map (check short field name too)
-            if (!value) {
-                const shortName = fieldName.replace(/^.*\./, '').replace(/\[\d+\]$/g, '');
-                if (knownMap[shortName]) {
-                    value = buildCompositeValue(knownMap[shortName], formData);
-                }
-            }
-
-            // Priority 5: Heuristic keyword matching
-            if (!value) {
-                value = heuristicMatchField(fieldName, formData);
-            }
-
-            // Fill the field
             if (value !== null && value !== undefined && value !== '') {
                 try {
                     if (fieldType === 'PDFTextField') {
                         let textVal = String(value);
-                        // Respect maxLength if set on the field
                         try {
                             const maxLen = field.getMaxLength();
-                            if (maxLen && maxLen > 0 && textVal.length > maxLen) {
-                                textVal = textVal.substring(0, maxLen);
-                            }
-                        } catch(ml) { /* no maxLength set */ }
+                            if (maxLen && maxLen > 0 && textVal.length > maxLen) textVal = textVal.substring(0, maxLen);
+                        } catch(ml) {}
                         field.setText(textVal);
                         filledCount++;
-                        filledFields.push(fieldName);
                     } else if (fieldType === 'PDFCheckBox') {
-                        if (value === true || value === 'true' || value === '1' || value === 'Yes') {
-                            field.check();
-                            filledCount++;
-                            filledFields.push(fieldName);
-                        }
+                        if (value === true || value === 'true' || value === '1' || value === 'Yes') { field.check(); filledCount++; }
                     } else if (fieldType === 'PDFDropdown') {
-                        try { field.select(String(value)); filledCount++; filledFields.push(fieldName); } catch(e) {}
+                        try { field.select(String(value)); filledCount++; } catch(e) {}
                     } else if (fieldType === 'PDFRadioGroup') {
-                        try { field.select(String(value)); filledCount++; filledFields.push(fieldName); } catch(e) {}
+                        try { field.select(String(value)); filledCount++; } catch(e) {}
                     }
                 } catch (e) {
                     console.warn(`Could not fill field ${fieldName}:`, e.message);
@@ -564,24 +568,13 @@ async function generateFilledPDF(rootDir, template, formData, submissionId) {
             }
         }
 
-        // Flatten filled fields so they become permanent
-        try {
-            form.flatten();
-        } catch (e) {
-            console.warn('Could not flatten form:', e.message);
-        }
-
-        console.log(`PDF Fill: ${template.form_type} — ${filledCount}/${fields.length} fields filled`);
+        try { form.flatten(); } catch (e) { console.warn('Could not flatten form:', e.message); }
+        console.log(`PDF Fill (pdf-lib): ${template.form_type} — ${filledCount}/${fields.length} fields filled`);
     }
 
-    // ALWAYS append a data summary page with all entered information
-    // This ensures the user's data is ALWAYS visible in the output PDF
     await appendDataSummaryPage(pdfDoc, template, formData, submissionId, filledCount, fields.length);
-
     const filledPdfBytes = await pdfDoc.save();
-    const outputFilename = `${template.form_type}_${submissionId}_${Date.now()}.pdf`;
-    const outputPath = path.join('generated', outputFilename);
-    fs.writeFileSync(path.join(rootDir, outputPath), filledPdfBytes);
+    fs.writeFileSync(fullOutputPath, filledPdfBytes);
 
     return outputPath;
 }

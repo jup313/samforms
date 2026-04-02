@@ -1,9 +1,14 @@
-FROM node:18-alpine
+FROM node:18-slim
 
 WORKDIR /app
 
-# Install build dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
+# Install pdftk (Java-based) and build dependencies for better-sqlite3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pdftk-java \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package.json package-lock.json* ./

@@ -6,6 +6,7 @@ const fs = require('fs');
 const { PDFDocument } = require('pdf-lib');
 const https = require('https');
 const http = require('http');
+const pdftk = require('../utils/pdftk');
 
 // Configure multer for PDF uploads
 const storage = multer.diskStorage({
@@ -112,34 +113,126 @@ router.get('/:id', (req, res) => {
     }
 });
 
-// Get PDF field names from uploaded template
+// Get PDF field names from uploaded template (uses pdftk if available, falls back to pdf-lib)
 router.get('/:id/fields', async (req, res) => {
     const db = req.app.locals.db;
     try {
         const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
         if (!template) return res.status(404).json({ error: 'Template not found' });
         
-        if (!template.file_path || !fs.existsSync(path.join(req.app.locals.rootDir, template.file_path))) {
-            // Return field mappings from DB if no PDF uploaded yet
+        const pdfFullPath = template.file_path ? path.join(req.app.locals.rootDir, template.file_path) : null;
+        if (!pdfFullPath || !fs.existsSync(pdfFullPath)) {
             return res.json({ 
                 fields: [], 
                 mappings: JSON.parse(template.field_mappings || '{}'),
-                hasPdf: false 
+                hasPdf: false,
+                engine: null
             });
         }
 
-        const pdfBytes = fs.readFileSync(path.join(req.app.locals.rootDir, template.file_path));
-        const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-        const form = pdfDoc.getForm();
-        const fields = form.getFields().map(field => ({
-            name: field.getName(),
-            type: field.constructor.name
-        }));
+        let fields = [];
+        let engine = 'pdf-lib';
+
+        // Try pdftk first (better XFA support)
+        if (pdftk.isPdftkAvailable()) {
+            const pdftkFields = pdftk.scanFields(pdfFullPath);
+            if (pdftkFields && pdftkFields.length > 0) {
+                fields = pdftkFields.map(f => ({
+                    name: f.fullName,
+                    shortName: f.shortName,
+                    type: f.type,
+                    maxLength: f.maxLength,
+                    options: f.options
+                }));
+                engine = 'pdftk';
+            }
+        }
+
+        // Fallback to pdf-lib
+        if (fields.length === 0) {
+            try {
+                const pdfBytes = fs.readFileSync(pdfFullPath);
+                const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+                const form = pdfDoc.getForm();
+                fields = form.getFields().map(field => ({
+                    name: field.getName(),
+                    shortName: field.getName().replace(/^.*\./, '').replace(/\[\d+\]$/g, ''),
+                    type: field.constructor.name,
+                    maxLength: null,
+                    options: null
+                }));
+            } catch (e) {
+                // PDF might not have form fields
+            }
+        }
 
         res.json({ 
             fields, 
             mappings: JSON.parse(template.field_mappings || '{}'),
-            hasPdf: true 
+            hasPdf: true,
+            engine,
+            fieldCount: fields.length
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Scan PDF fields with pdftk and auto-suggest + optionally save field mappings
+router.post('/:id/scan-fields', (req, res) => {
+    const db = req.app.locals.db;
+    try {
+        const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
+        if (!template) return res.status(404).json({ error: 'Template not found' });
+
+        const pdfFullPath = template.file_path ? path.join(req.app.locals.rootDir, template.file_path) : null;
+        if (!pdfFullPath || !fs.existsSync(pdfFullPath)) {
+            return res.status(400).json({ error: 'Template has no PDF file uploaded' });
+        }
+
+        if (!pdftk.isPdftkAvailable()) {
+            return res.status(503).json({ error: 'pdftk is not available on this system. Install pdftk-java to use auto-scanning.' });
+        }
+
+        const fields = pdftk.scanFields(pdfFullPath);
+        if (!fields || fields.length === 0) {
+            return res.json({ fields: [], suggestions: {}, message: 'No form fields found in PDF' });
+        }
+
+        // Auto-suggest mappings
+        const suggestions = pdftk.suggestMappings(fields);
+
+        // If auto_save is true, merge suggestions into existing field_mappings
+        const { auto_save } = req.body || {};
+        let savedMappings = JSON.parse(template.field_mappings || '{}');
+
+        if (auto_save) {
+            // Only add suggestions for keys not already mapped
+            let newCount = 0;
+            for (const [dataKey, fullFieldName] of Object.entries(suggestions)) {
+                if (!savedMappings[dataKey] || savedMappings[dataKey] === '' || savedMappings[dataKey] === dataKey) {
+                    savedMappings[dataKey] = fullFieldName;
+                    newCount++;
+                }
+            }
+            if (newCount > 0) {
+                db.prepare('UPDATE templates SET field_mappings = ? WHERE id = ?')
+                    .run(JSON.stringify(savedMappings), template.id);
+            }
+
+            return res.json({
+                fields: fields.map(f => ({ fullName: f.fullName, shortName: f.shortName, type: f.type, maxLength: f.maxLength, options: f.options })),
+                suggestions,
+                savedMappings,
+                message: `Scanned ${fields.length} fields. Auto-saved ${newCount} new mapping(s). Total mappings: ${Object.keys(savedMappings).length}.`
+            });
+        }
+
+        res.json({
+            fields: fields.map(f => ({ fullName: f.fullName, shortName: f.shortName, type: f.type, maxLength: f.maxLength, options: f.options })),
+            suggestions,
+            currentMappings: savedMappings,
+            message: `Found ${fields.length} fields with ${Object.keys(suggestions).length} auto-suggested mapping(s). POST with { "auto_save": true } to save.`
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
