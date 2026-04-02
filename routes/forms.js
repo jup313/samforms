@@ -202,6 +202,27 @@ router.post('/', async (req, res) => {
 // Tries to match IRS PDF field names (often cryptic like "f1_01", "topmostSubform[0].Page1[0].f1_1[0]")
 // to our human-readable data keys (like "first_name", "ssn", "address")
 function heuristicMatchField(pdfFieldName, formData) {
+    // ---- Skip numbered duplicate slots (2+) ----
+    // Forms like 2848 have RepresentativesName1..4, CAFNumber1..4, Description1..3
+    // We only fill slot 1 via explicit known maps; slots 2+ should stay empty
+    const shortForSlotCheck = pdfFieldName.replace(/^.*\./, '').replace(/\[\d+\]$/g, '');
+    const slotMatch = shortForSlotCheck.match(/^(.+?)(\d+)$/);
+    if (slotMatch) {
+        const baseLower = slotMatch[1].toLowerCase();
+        const slotNum = parseInt(slotMatch[2]);
+        // Known multi-slot field bases (2848, 8821, and similar forms)
+        const multiSlotBases = [
+            'representativesname', 'representativesaddress', 'cafnumber', 'ptin',
+            'telephoneno', 'faxno', 'description', 'taxform', 'years',
+            'designation', 'jurisdiction', 'bar', 'signature', 'date',
+            'additionalacts', 'otheracts', 'specificdeletions',
+            'printname',
+        ];
+        if (slotNum >= 2 && multiSlotBases.includes(baseLower)) {
+            return null; // Skip — only slot 1 gets filled
+        }
+    }
+
     // CRITICAL: Split CamelCase BEFORE lowercasing so "TaxpayerAddress" → "Taxpayer Address"
     const lower = pdfFieldName
         .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -282,6 +303,33 @@ function heuristicMatchField(pdfFieldName, formData) {
 // Hard-coded mappings for common IRS forms where PDF field names are cryptic
 // Format: { form_type: { pdf_field_name: our_data_key } }
 const KNOWN_IRS_FIELD_MAPS = {
+    '2848': {
+        // Page 1 — Taxpayer info
+        'TaxpayerName': 'full_name',
+        'TaxpayerAddress': 'full_address',
+        'TaxpayerIDSSN': 'ssn',
+        'TaxpayerIDEIN': 'ein',
+        'TaxpayerTelephone': 'phone',
+        'TaxpayerPlanNumber': 'plan_number',
+        // Page 1 — Representative 1 ONLY
+        'RepresentativesName1': 'representative_name',
+        'RepresentativesAddress1': 'representative_address',
+        'CAFNumber1': 'caf_number',
+        'PTIN1': 'representative_ptin',
+        'TelephoneNo1': 'representative_phone',
+        'FaxNo1': 'representative_fax',
+        // Page 1 — Tax matters row 1 ONLY
+        'Description1': 'tax_matters',
+        'TaxForm1': 'tax_form_number',
+        'Years1': 'tax_years',
+        // Page 2 — Signature area
+        'PrintName': 'full_name',
+        'PrintNameTaxpayer': 'full_name',
+        // Page 2 — Part II Declaration row 1 ONLY
+        'Designation1': 'representative_designation',
+        'Jurisdiction1': 'representative_jurisdiction',
+        'Bar1': 'representative_bar_number',
+    },
     '8821': {
         'f1_6': 'full_name',         // Taxpayer name and address
         'f1_7': 'ssn',               // Taxpayer identification number(s)
@@ -357,6 +405,15 @@ function buildCompositeValue(key, formData) {
     if (key === 'city_state_zip') {
         const parts = [formData.city, formData.state, formData.zip].filter(Boolean);
         return parts.length > 0 ? parts.join(', ') : null;
+    }
+    if (key === 'full_address') {
+        const line1 = formData.address || '';
+        const csz = [formData.city, formData.state, formData.zip].filter(Boolean).join(', ');
+        const parts = [line1, csz].filter(Boolean);
+        return parts.length > 0 ? parts.join('\n') : null;
+    }
+    if (key === 'representative_ptin') {
+        return formData.representative_ptin || formData.ptin || null;
     }
     // SSN split into 3 parts (xxx-xx-xxxx)
     if (key === 'ssn_1' && formData.ssn) {
