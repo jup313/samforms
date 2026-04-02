@@ -203,6 +203,11 @@ router.post('/', async (req, res) => {
 // Tries to match IRS PDF field names (often cryptic like "f1_01", "topmostSubform[0].Page1[0].f1_1[0]")
 // to our human-readable data keys (like "first_name", "ssn", "address")
 function heuristicMatchField(pdfFieldName, formData) {
+    // ---- Skip fields that should NEVER be auto-filled (signature areas) ----
+    const shortForSkip = pdfFieldName.replace(/^.*\./, '').replace(/\[\d+\]$/g, '').toLowerCase();
+    const neverFillFields = ['printname', 'printnametaxpayer', 'title', 'signature', 'date'];
+    if (neverFillFields.includes(shortForSkip)) return null;
+
     // ---- Skip numbered duplicate slots (2+) ----
     // Forms like 2848 have RepresentativesName1..4, CAFNumber1..4, Description1..3
     // We only fill slot 1 via explicit known maps; slots 2+ should stay empty
@@ -323,9 +328,8 @@ const KNOWN_IRS_FIELD_MAPS = {
         'Description1': 'tax_matters',
         'TaxForm1': 'tax_form_number',
         'Years1': 'tax_years',
-        // Page 2 — Signature area
-        'PrintName': 'full_name',
-        'PrintNameTaxpayer': 'full_name',
+        // Page 2 — Signature area (leave blank - taxpayer fills in when signing)
+        // 'PrintName' and 'PrintNameTaxpayer' intentionally NOT mapped
         // Page 2 — Part II Declaration row 1 ONLY
         'Designation1': 'representative_designation',
         'Jurisdiction1': 'representative_jurisdiction',
