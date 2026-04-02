@@ -28,7 +28,7 @@ const correctMappings = {
     'specific_acts': 'topmostSubform[0].Page1[0].AdditionalActs1[0]',
     'specific_deletions': 'topmostSubform[0].Page2[0].SpecificDeletions1[0]',
     'full_name_p2': 'topmostSubform[0].Page2[0].PrintName[0]',
-    'business_name_p2': 'topmostSubform[0].Page2[0].PrintNameTaxpayer[0]',
+    'taxpayer_name_if_entity_p2': 'topmostSubform[0].Page2[0].PrintNameTaxpayer[0]',
     'representative_designation': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Designation1[0]',
     'representative_jurisdiction': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Jurisdiction1[0]',
     'representative_bar_number': 'topmostSubform[0].Page2[0].Table_PartII[0].BodyRow1[0].Bar1[0]'

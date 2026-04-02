@@ -205,7 +205,9 @@ router.post('/', async (req, res) => {
 function heuristicMatchField(pdfFieldName, formData) {
     // ---- Skip fields that should NEVER be auto-filled (signature areas) ----
     const shortForSkip = pdfFieldName.replace(/^.*\./, '').replace(/\[\d+\]$/g, '').toLowerCase();
-    const neverFillFields = ['title', 'signature', 'date'];
+    // PrintNameTaxpayer: "Print name of taxpayer from line 1 if other than individual"
+    // — only filled via explicit mapping to business_name, never by heuristic
+    const neverFillFields = ['printnametaxpayer', 'title', 'signature', 'date'];
     if (neverFillFields.includes(shortForSkip)) return null;
 
     // ---- Skip numbered duplicate slots (2+) ----
@@ -330,7 +332,7 @@ const KNOWN_IRS_FIELD_MAPS = {
         'Years1': 'tax_years',
         // Page 2 — Signature area
         'PrintName': 'full_name',                // Print name (taxpayer signing)
-        'PrintNameTaxpayer': 'business_name',     // Print name of taxpayer from line 1 if other than individual
+        'PrintNameTaxpayer': 'taxpayer_name_if_entity',  // Print name of taxpayer from line 1 if other than individual
         // Page 2 — Part II Declaration row 1 ONLY
         'Designation1': 'representative_designation',
         'Jurisdiction1': 'representative_jurisdiction',
@@ -417,6 +419,15 @@ function buildCompositeValue(key, formData) {
         const csz = [formData.city, formData.state, formData.zip].filter(Boolean).join(', ');
         const parts = [line1, csz].filter(Boolean);
         return parts.length > 0 ? parts.join('\n') : null;
+    }
+    if (key === 'taxpayer_name_if_entity') {
+        // IRS: "Print name of taxpayer from line 1 if other than individual"
+        // Only filled when taxpayer is an entity (business_name exists), not an individual
+        if (formData.business_name) {
+            const parts = [formData.first_name, formData.last_name].filter(Boolean);
+            return parts.length > 0 ? parts.join(' ') : formData.business_name;
+        }
+        return null; // Individual taxpayer — leave blank per IRS instructions
     }
     if (key === 'representative_ptin') {
         return formData.representative_ptin || formData.ptin || null;
