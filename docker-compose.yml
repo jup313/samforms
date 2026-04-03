@@ -13,8 +13,26 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - STIRLING_PDF_URL=http://10.0.154.150:8848
+
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:latest
+    container_name: stirling-pdf
+    ports:
+      - "8848:8080"
+    volumes:
+      - irs-generated:/app/generated:ro
+      - stirling-data:/configs
+      - stirling-logs:/logs
+    restart: unless-stopped
+    environment:
+      - DOCKER_ENABLE_SECURITY=false
+      - SECURITY_ENABLELOGIN=false
+      - SYSTEM_DEFAULTLOCALE=en_US
 
 volumes:
   irs-data:
   irs-pdfs:
   irs-generated:
+  stirling-data:
+  stirling-logs:

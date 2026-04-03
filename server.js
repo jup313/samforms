@@ -47,6 +47,13 @@ app.use('/api/templates', require('./routes/templates'));
 app.use('/api/forms', require('./routes/forms'));
 app.use('/api/firm-profile', require('./routes/firm-profile'));
 
+// Config endpoint — exposes non-sensitive settings to the frontend
+app.get('/api/config', (req, res) => {
+    res.json({
+        stirling_pdf_url: process.env.STIRLING_PDF_URL || ''
+    });
+});
+
 // Serve main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

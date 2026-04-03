@@ -3,6 +3,36 @@ let allCustomers = [];
 let allTemplates = [];
 let currentTemplate = null;
 let currentPage = 'dashboard';
+let stirlingPdfUrl = ''; // Set dynamically from server config
+
+// ==================== STIRLING PDF INTEGRATION ====================
+async function loadStirlingConfig() {
+    try {
+        const config = await api('/api/config');
+        stirlingPdfUrl = config.stirling_pdf_url || '';
+    } catch (e) {
+        console.warn('Could not load config:', e.message);
+    }
+}
+
+function openStirlingPdf(pdfPath) {
+    if (!stirlingPdfUrl) {
+        showToast('PDF Editor is not configured. Check Stirling-PDF service.', 'error');
+        return;
+    }
+    if (pdfPath) {
+        // Open Stirling-PDF — user can upload/drag the file from the download
+        window.open(stirlingPdfUrl, '_blank');
+        // Also trigger a download so user has the file ready to upload into Stirling
+        const link = document.createElement('a');
+        link.href = `/${pdfPath}`;
+        link.download = pdfPath.split('/').pop();
+        link.click();
+        showToast('PDF downloaded — drag it into the PDF Editor to make changes', 'info');
+    } else {
+        window.open(stirlingPdfUrl, '_blank');
+    }
+}
 
 // ==================== NAVIGATION ====================
 function navigateTo(page) {
@@ -100,7 +130,7 @@ async function loadDashboard() {
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <span class="badge badge-success">${f.status}</span>
                         <span style="font-size: 12px; color: var(--text-light);">${new Date(f.created_at).toLocaleDateString()}</span>
-                        ${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-outline">📥 PDF</a>` : ''}
+                        ${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-outline">📥 PDF</a><button class="btn btn-sm btn-outline" onclick="openStirlingPdf('${f.pdf_path}')" title="Edit in PDF Editor">✏️</button>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -164,8 +194,62 @@ async function selectFormTemplate(templateId) {
         // Build dynamic form fields
         buildFormFields(currentTemplate);
         setupCustomerPicker();
+
+        // Auto-populate firm profile data into matching form fields
+        await autoFillFirmProfile();
     } catch (err) {
         showToast('Error loading template: ' + err.message, 'error');
+    }
+}
+
+// Auto-fill firm profile data into form fields that match
+async function autoFillFirmProfile() {
+    try {
+        const profile = await api('/api/firm-profile');
+        if (!profile) return;
+
+        // Map firm profile DB columns to form field IDs
+        // These are the fields that come from the firm profile, not the customer
+        const firmFieldMap = {
+            firm_name: profile.firm_name,
+            firm_address: profile.firm_address,
+            firm_city: profile.firm_city,
+            firm_state: profile.firm_state,
+            firm_zip: profile.firm_zip,
+            firm_phone: profile.firm_phone,
+            firm_fax: profile.firm_fax,
+            firm_email: profile.firm_email,
+            firm_ein: profile.firm_ein,
+            firm_ptin: profile.firm_ptin,
+            representative_name: profile.representative_name,
+            representative_address: profile.representative_address,
+            representative_phone: profile.representative_phone,
+            representative_fax: profile.representative_fax,
+            representative_ptin: profile.representative_ptin,
+            representative_designation: profile.representative_designation,
+            representative_jurisdiction: profile.representative_jurisdiction,
+            representative_bar_number: profile.representative_bar_number,
+            caf_number: profile.caf_number,
+            preparer_name: profile.preparer_name,
+            preparer_title: profile.preparer_title,
+        };
+
+        let filled = 0;
+        for (const [fieldName, value] of Object.entries(firmFieldMap)) {
+            if (!value) continue;
+            const el = document.getElementById(`field_${fieldName}`);
+            if (el && !el.value) {
+                el.value = value;
+                filled++;
+            }
+        }
+
+        if (filled > 0) {
+            showToast(`Auto-filled ${filled} field(s) from Firm Profile`, 'info');
+        }
+    } catch (e) {
+        // Silently ignore — firm profile may not be set up yet
+        console.warn('Could not auto-fill firm profile:', e.message);
     }
 }
 
@@ -173,7 +257,8 @@ function populateTaxYearDropdown() {
     const select = document.getElementById('taxYearSelect');
     select.innerHTML = '';
     const currentYear = new Date().getFullYear();
-    for (let year = 2025; year <= 2200; year++) {
+    // Start from 2020 up to current year, newest first
+    for (let year = currentYear; year >= 2020; year--) {
         const opt = document.createElement('option');
         opt.value = year.toString();
         opt.textContent = year.toString();
@@ -220,7 +305,7 @@ function buildFormFields(template) {
 
 function buildFieldInput(field) {
     const label = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    const isRequired = (field === 'first_name' || field === 'last_name');
+    const isRequired = false; // No required fields — all fields are optional
 
     // Determine input type
     let inputType = 'text';
@@ -407,11 +492,6 @@ async function submitForm() {
         }
     });
 
-    // Validate required fields
-    if (!formData.first_name || !formData.last_name) {
-        showToast('First Name and Last Name are required!', 'error');
-        return;
-    }
 
     const customerId = document.getElementById('selectedCustomerId').value;
     const saveCustomer = document.getElementById('saveCustomerCheck').checked;
@@ -445,8 +525,13 @@ async function submitForm() {
             const link = document.getElementById('downloadPdfLink');
             link.href = `/${result.pdf_path}`;
             link.style.display = 'inline-flex';
+            // Show Edit PDF button
+            const editBtn = document.getElementById('editPdfBtn');
+            editBtn.dataset.pdfPath = result.pdf_path;
+            editBtn.style.display = stirlingPdfUrl ? 'inline-flex' : 'none';
         } else {
             document.getElementById('downloadPdfLink').style.display = 'none';
+            document.getElementById('editPdfBtn').style.display = 'none';
         }
 
         document.getElementById('formSuccessMessage').textContent = msg.join(' ');
@@ -625,7 +710,7 @@ async function viewCustomer(id) {
                 html += `<tr>
                     <td><strong>${f.form_type}</strong> ${f.form_name || ''}</td>
                     <td>${new Date(f.created_at).toLocaleDateString()}</td>
-                    <td>${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-outline">📥</a>` : '—'}</td>
+                    <td>${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-outline">📥</a><button class="btn btn-sm btn-outline" onclick="openStirlingPdf('${f.pdf_path}')" title="Edit in PDF Editor">✏️</button>` : '—'}</td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -871,7 +956,7 @@ async function loadHistory() {
                 <td>${new Date(f.created_at).toLocaleDateString()}</td>
                 <td>
                     <div class="actions">
-                        ${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-success">📥 PDF</a>` : ''}
+                        ${f.pdf_path ? `<a href="/${f.pdf_path}" target="_blank" class="btn btn-sm btn-success">📥 PDF</a><button class="btn btn-sm btn-outline" onclick="openStirlingPdf('${f.pdf_path}')" title="Edit in PDF Editor">✏️</button>` : ''}
                         <button class="btn btn-sm btn-danger" onclick="deleteSubmission(${f.id})">🗑️</button>
                     </div>
                 </td>
@@ -1137,5 +1222,6 @@ async function saveFirmProfile() {
 
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
+    loadStirlingConfig();
     loadDashboard();
 });
