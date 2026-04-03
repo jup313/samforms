@@ -1,9 +1,11 @@
 node_modules/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 .chat_history
-generated/*.pdf
+generated/
 pdf-templates/archive/
 .DS_Store
 ._*
 /tmp/
-generated/
